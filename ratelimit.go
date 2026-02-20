@@ -48,6 +48,10 @@ type Config struct {
 	// If empty, defaults to ~/.core/ratelimits.yaml.
 	FilePath string `yaml:"file_path,omitempty"`
 
+	// Backend selects the persistence backend: "yaml" (default) or "sqlite".
+	// An empty string is treated as "yaml" for backward compatibility.
+	Backend string `yaml:"backend,omitempty"`
+
 	// Quotas sets per-model rate limits directly.
 	// These are merged on top of any provider profile defaults.
 	Quotas map[string]ModelQuota `yaml:"quotas,omitempty"`
@@ -77,6 +81,7 @@ type RateLimiter struct {
 	Quotas   map[string]ModelQuota  `yaml:"quotas"`
 	State    map[string]*UsageStats `yaml:"state"`
 	filePath string
+	sqlite   *sqliteStore // non-nil when backend is "sqlite"
 }
 
 // DefaultProfiles returns pre-configured quota profiles for each provider.
@@ -194,10 +199,14 @@ func (rl *RateLimiter) AddProvider(provider Provider) {
 	}
 }
 
-// Load reads the state from disk.
+// Load reads the state from disk (YAML) or database (SQLite).
 func (rl *RateLimiter) Load() error {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+
+	if rl.sqlite != nil {
+		return rl.loadSQLite()
+	}
 
 	data, err := os.ReadFile(rl.filePath)
 	if os.IsNotExist(err) {
@@ -210,10 +219,37 @@ func (rl *RateLimiter) Load() error {
 	return yaml.Unmarshal(data, rl)
 }
 
-// Persist writes the state to disk.
+// loadSQLite reads quotas and state from the SQLite backend.
+// Caller must hold the lock.
+func (rl *RateLimiter) loadSQLite() error {
+	quotas, err := rl.sqlite.loadQuotas()
+	if err != nil {
+		return err
+	}
+	// Merge loaded quotas (loaded quotas override in-memory defaults).
+	for model, q := range quotas {
+		rl.Quotas[model] = q
+	}
+
+	state, err := rl.sqlite.loadState()
+	if err != nil {
+		return err
+	}
+	// Replace in-memory state with persisted state.
+	for model, s := range state {
+		rl.State[model] = s
+	}
+	return nil
+}
+
+// Persist writes the state to disk (YAML) or database (SQLite).
 func (rl *RateLimiter) Persist() error {
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
+
+	if rl.sqlite != nil {
+		return rl.persistSQLite()
+	}
 
 	data, err := yaml.Marshal(rl)
 	if err != nil {
@@ -226,6 +262,15 @@ func (rl *RateLimiter) Persist() error {
 	}
 
 	return os.WriteFile(rl.filePath, data, 0644)
+}
+
+// persistSQLite writes quotas and state to the SQLite backend.
+// Caller must hold the read lock.
+func (rl *RateLimiter) persistSQLite() error {
+	if err := rl.sqlite.saveQuotas(rl.Quotas); err != nil {
+		return err
+	}
+	return rl.sqlite.saveState(rl.State)
 }
 
 // prune removes entries older than the sliding window (1 minute).
@@ -466,6 +511,95 @@ func (rl *RateLimiter) AllStats() map[string]ModelStats {
 	}
 
 	return result
+}
+
+// NewWithSQLite creates a SQLite-backed RateLimiter with Gemini defaults.
+// The database is created at dbPath if it does not exist. Use Close() to
+// release the database connection when finished.
+func NewWithSQLite(dbPath string) (*RateLimiter, error) {
+	return NewWithSQLiteConfig(dbPath, Config{
+		Providers: []Provider{ProviderGemini},
+	})
+}
+
+// NewWithSQLiteConfig creates a SQLite-backed RateLimiter with custom config.
+// The Backend field in cfg is ignored (always "sqlite"). Use Close() to
+// release the database connection when finished.
+func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) {
+	store, err := newSQLiteStore(dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	rl := &RateLimiter{
+		Quotas: make(map[string]ModelQuota),
+		State:  make(map[string]*UsageStats),
+		sqlite: store,
+	}
+
+	// Load provider profiles.
+	profiles := DefaultProfiles()
+	providers := cfg.Providers
+	if len(providers) == 0 && len(cfg.Quotas) == 0 {
+		providers = []Provider{ProviderGemini}
+	}
+	for _, p := range providers {
+		if profile, ok := profiles[p]; ok {
+			for model, quota := range profile.Models {
+				rl.Quotas[model] = quota
+			}
+		}
+	}
+	for model, quota := range cfg.Quotas {
+		rl.Quotas[model] = quota
+	}
+
+	return rl, nil
+}
+
+// Close releases resources held by the RateLimiter. For YAML-backed
+// limiters this is a no-op. For SQLite-backed limiters it closes the
+// database connection.
+func (rl *RateLimiter) Close() error {
+	if rl.sqlite != nil {
+		return rl.sqlite.close()
+	}
+	return nil
+}
+
+// MigrateYAMLToSQLite reads state from a YAML file and writes it to a new
+// SQLite database. Both quotas and usage state are migrated. The SQLite
+// database is created if it does not exist.
+func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
+	// Load from YAML.
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		return fmt.Errorf("ratelimit.MigrateYAMLToSQLite: read: %w", err)
+	}
+
+	var rl RateLimiter
+	if err := yaml.Unmarshal(data, &rl); err != nil {
+		return fmt.Errorf("ratelimit.MigrateYAMLToSQLite: unmarshal: %w", err)
+	}
+
+	// Write to SQLite.
+	store, err := newSQLiteStore(sqlitePath)
+	if err != nil {
+		return err
+	}
+	defer store.close()
+
+	if rl.Quotas != nil {
+		if err := store.saveQuotas(rl.Quotas); err != nil {
+			return err
+		}
+	}
+	if rl.State != nil {
+		if err := store.saveState(rl.State); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CountTokens calls the Google API to count tokens for a prompt.

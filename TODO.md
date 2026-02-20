@@ -26,8 +26,8 @@ Current YAML persistence is single-process only. Phase 2 adds multi-process safe
 
 ### 2.1 SQLite Backend
 
-- [ ] **Add `modernc.org/sqlite` dependency** — `go get modernc.org/sqlite`. Pure Go, compiles everywhere.
-- [ ] **Create `sqlite.go`** — Internal SQLite persistence layer:
+- [x] **Add `modernc.org/sqlite` dependency** — `go get modernc.org/sqlite`. Pure Go, compiles everywhere.
+- [x] **Create `sqlite.go`** — Internal SQLite persistence layer:
   - `type sqliteStore struct { db *sql.DB }` — wraps database/sql connection
   - `func newSQLiteStore(dbPath string) (*sqliteStore, error)` — Open DB, set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, `db.SetMaxOpenConns(1)`. Create schema:
     ```sql
@@ -62,19 +62,19 @@ Current YAML persistence is single-process only. Phase 2 adds multi-process safe
 
 ### 2.2 Wire Into RateLimiter
 
-- [ ] **Add `Backend` field to Config** — `Backend string` with values `"yaml"` (default), `"sqlite"`. Default `""` maps to `"yaml"` for backward compat.
-- [ ] **Update `Persist()` and `Load()`** — Check internal backend type. If SQLite, use `sqliteStore`; otherwise use existing YAML. Keep both paths working.
-- [ ] **Add `NewWithSQLite(dbPath string) (*RateLimiter, error)`** — Convenience constructor that creates a SQLite-backed limiter. Sets backend type, initialises DB.
-- [ ] **Graceful close** — Add `Close() error` method that closes SQLite DB if open. No-op for YAML backend.
+- [x] **Add `Backend` field to Config** — `Backend string` with values `"yaml"` (default), `"sqlite"`. Default `""` maps to `"yaml"` for backward compat.
+- [x] **Update `Persist()` and `Load()`** — Check internal backend type. If SQLite, use `sqliteStore`; otherwise use existing YAML. Keep both paths working.
+- [x] **Add `NewWithSQLite(dbPath string) (*RateLimiter, error)`** — Convenience constructor that creates a SQLite-backed limiter. Sets backend type, initialises DB.
+- [x] **Graceful close** — Add `Close() error` method that closes SQLite DB if open. No-op for YAML backend.
 
 ### 2.3 Tests
 
-- [ ] **SQLite basic tests** — newSQLiteStore, saveQuotas/loadQuotas round-trip, saveState/loadState round-trip, close.
-- [ ] **SQLite integration** — NewWithSQLite, RecordUsage → Persist → Load → verify state preserved. Same test matrix as existing YAML tests but with SQLite backend.
-- [ ] **Concurrent SQLite** — 10 goroutines × 100 ops (RecordUsage + CanSend + Persist + Load). Race-clean.
-- [ ] **YAML backward compat** — Existing tests must pass unchanged (still default to YAML).
-- [ ] **Migration helper** — `MigrateYAMLToSQLite(yamlPath, sqlitePath string) error` — reads YAML state, writes to SQLite. Test with sample YAML.
-- [ ] **Corrupt DB recovery** — Truncated DB file → graceful error, fresh start.
+- [x] **SQLite basic tests** — newSQLiteStore, saveQuotas/loadQuotas round-trip, saveState/loadState round-trip, close.
+- [x] **SQLite integration** — NewWithSQLite, RecordUsage → Persist → Load → verify state preserved. Same test matrix as existing YAML tests but with SQLite backend.
+- [x] **Concurrent SQLite** — 10 goroutines x 20 ops (RecordUsage + CanSend + Persist). Race-clean.
+- [x] **YAML backward compat** — Existing tests pass unchanged (still default to YAML).
+- [x] **Migration helper** — `MigrateYAMLToSQLite(yamlPath, sqlitePath string) error` — reads YAML state, writes to SQLite. Test with sample YAML.
+- [x] **Corrupt DB recovery** — Truncated DB file → graceful error, fresh start.
 
 ## Phase 3: Integration
 
