@@ -7,8 +7,8 @@ Dispatched from core/go orchestration. Pick up tasks in order.
 ## Phase 0: Hardening & Test Coverage
 
 - [x] **Expand test coverage** -- `ratelimit_test.go` rewritten with testify. Tests for: `CanSend()` at exact limits (RPM, TPM, RPD boundaries), `RecordUsage()` with concurrent goroutines, `WaitForCapacity()` timeout and immediate-capacity paths, `prune()` sliding window edge cases, daily reset logic (24h boundary), YAML persistence (save + reload), corrupt/unreadable state file recovery, `Reset()` single/all/nonexistent, `Stats()` known/unknown/quota-only models, `AllStats()` with pruning and daily reset.
-- [x] **Race condition test** -- `go test -race ./...` with 20 goroutines calling `CanSend()` + `RecordUsage()` + `Stats()` concurrently. Additional test with concurrent `Reset()` + `RecordUsage()` + `AllStats()`. All pass clean.
-- [x] **Benchmark** -- `BenchmarkCanSend` (1000-entry window), `BenchmarkRecordUsage`, `BenchmarkCanSendConcurrent` (parallel). Measures prune() overhead.
+- [x] **Race condition test** -- `go test -race ./...` with 20 goroutines calling `CanSend()` + `RecordUsage()` + `Stats()` concurrently. Additional tests: concurrent `Reset()` + `RecordUsage()` + `AllStats()`, concurrent multi-model access (5 models), concurrent `Persist()` + `Load()` filesystem race, concurrent `AllStats()` + `RecordUsage()`, concurrent `WaitForCapacity()` + `RecordUsage()`. All pass clean.
+- [x] **Benchmark** -- 7 benchmarks: `BenchmarkCanSend` (1000-entry window), `BenchmarkRecordUsage`, `BenchmarkCanSendConcurrent` (parallel), `BenchmarkCanSendWithPrune` (500 old + 500 new), `BenchmarkStats` (1000 entries), `BenchmarkAllStats` (5 models x 200 entries), `BenchmarkPersist` (YAML I/O). Zero allocs on hot paths.
 - [x] **`go vet ./...` clean** -- No warnings.
 - **Coverage: 95.1%** (up from 77.1%). Remaining uncovered: `CountTokens` success path (hardcoded Google URL), `yaml.Marshal` error path in `Persist()`, `os.UserHomeDir` error path in `NewWithConfig`.
 

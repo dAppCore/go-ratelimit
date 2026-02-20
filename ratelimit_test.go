@@ -1098,6 +1098,231 @@ func TestProviderConstants(t *testing.T) {
 	assert.Equal(t, Provider("local"), ProviderLocal)
 }
 
+// --- Phase 0 addendum: Additional concurrent and multi-model race tests ---
+
+func TestConcurrentMultipleModels(t *testing.T) {
+	rl := newTestLimiter(t)
+	models := []string{"model-a", "model-b", "model-c", "model-d", "model-e"}
+	for _, m := range models {
+		rl.Quotas[m] = ModelQuota{MaxRPM: 1000, MaxTPM: 10000000, MaxRPD: 10000}
+	}
+
+	var wg sync.WaitGroup
+	iterations := 50
+
+	for _, m := range models {
+		wg.Add(1)
+		go func(model string) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				rl.CanSend(model, 10)
+				rl.RecordUsage(model, 10, 10)
+				rl.Stats(model)
+			}
+		}(m)
+	}
+
+	wg.Wait()
+
+	for _, m := range models {
+		stats := rl.Stats(m)
+		assert.Equal(t, iterations, stats.RPD, "each model should have correct RPD")
+	}
+}
+
+func TestConcurrentPersistAndLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "concurrent.yaml")
+
+	rl := newTestLimiter(t)
+	rl.filePath = path
+	model := "race-persist"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 10000, MaxTPM: 100000000, MaxRPD: 100000}
+
+	var wg sync.WaitGroup
+
+	// Writers + persist
+	for g := 0; g < 3; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				rl.RecordUsage(model, 10, 10)
+				_ = rl.Persist()
+			}
+		}()
+	}
+
+	// Loaders
+	for g := 0; g < 3; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				_ = rl.Load()
+			}
+		}()
+	}
+
+	wg.Wait()
+	// No panics or data races = pass
+}
+
+func TestConcurrentAllStatsAndRecordUsage(t *testing.T) {
+	rl := newTestLimiter(t)
+	models := []string{"stats-a", "stats-b", "stats-c"}
+	for _, m := range models {
+		rl.Quotas[m] = ModelQuota{MaxRPM: 1000, MaxTPM: 10000000, MaxRPD: 10000}
+	}
+
+	var wg sync.WaitGroup
+
+	for _, m := range models {
+		wg.Add(1)
+		go func(model string) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				rl.RecordUsage(model, 10, 10)
+			}
+		}(m)
+	}
+
+	// Read AllStats concurrently
+	for g := 0; g < 3; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				_ = rl.AllStats()
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestConcurrentWaitForCapacityAndRecordUsage(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "race-wait"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 10000000, MaxRPD: 10000}
+
+	var wg sync.WaitGroup
+
+	for g := 0; g < 5; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			_ = rl.WaitForCapacity(ctx, model, 10)
+		}()
+	}
+
+	// Record usage concurrently
+	for g := 0; g < 5; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				rl.RecordUsage(model, 10, 10)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// --- Phase 0 addendum: Additional benchmarks ---
+
+func BenchmarkCanSendWithPrune(b *testing.B) {
+	rl, _ := New()
+	model := "bench-prune"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 10000000, MaxTPM: 10000000000, MaxRPD: 10000000}
+
+	// Pre-fill with a mix of old and new entries to trigger pruning
+	now := time.Now()
+	rl.State[model] = &UsageStats{DayStart: now}
+	for i := 0; i < 500; i++ {
+		old := now.Add(-2 * time.Minute)
+		rl.State[model].Requests = append(rl.State[model].Requests, old)
+		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: old, Count: 100})
+	}
+	for i := 0; i < 500; i++ {
+		recent := now.Add(-time.Duration(i) * time.Millisecond * 100)
+		rl.State[model].Requests = append(rl.State[model].Requests, recent)
+		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: recent, Count: 100})
+	}
+	rl.State[model].DayCount = 1000
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rl.CanSend(model, 100)
+	}
+}
+
+func BenchmarkStats(b *testing.B) {
+	rl, _ := New()
+	model := "bench-stats"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 10000, MaxTPM: 100000000, MaxRPD: 100000}
+
+	now := time.Now()
+	rl.State[model] = &UsageStats{DayStart: now, DayCount: 500}
+	for i := 0; i < 1000; i++ {
+		t := now.Add(-time.Duration(i) * time.Millisecond * 50)
+		rl.State[model].Requests = append(rl.State[model].Requests, t)
+		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: t, Count: 100})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rl.Stats(model)
+	}
+}
+
+func BenchmarkAllStats(b *testing.B) {
+	rl, _ := New()
+	models := []string{"bench-a", "bench-b", "bench-c", "bench-d", "bench-e"}
+	now := time.Now()
+
+	for _, m := range models {
+		rl.Quotas[m] = ModelQuota{MaxRPM: 10000, MaxTPM: 100000000, MaxRPD: 100000}
+		rl.State[m] = &UsageStats{DayStart: now, DayCount: 200}
+		for i := 0; i < 200; i++ {
+			t := now.Add(-time.Duration(i) * time.Millisecond * 250)
+			rl.State[m].Requests = append(rl.State[m].Requests, t)
+			rl.State[m].Tokens = append(rl.State[m].Tokens, TokenEntry{Time: t, Count: 100})
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rl.AllStats()
+	}
+}
+
+func BenchmarkPersist(b *testing.B) {
+	tmpDir := b.TempDir()
+	path := filepath.Join(tmpDir, "bench.yaml")
+
+	rl, _ := New()
+	rl.filePath = path
+	model := "bench-persist"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 10000}
+
+	now := time.Now()
+	rl.State[model] = &UsageStats{DayStart: now, DayCount: 100}
+	for i := 0; i < 100; i++ {
+		t := now.Add(-time.Duration(i) * time.Second)
+		rl.State[model].Requests = append(rl.State[model].Requests, t)
+		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: t, Count: 100})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = rl.Persist()
+	}
+}
+
 func TestEndToEndMultiProvider(t *testing.T) {
 	// Simulate a real-world scenario: limiter for both Gemini and Anthropic
 	rl, err := NewWithConfig(Config{
