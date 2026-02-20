@@ -20,11 +20,61 @@ Dispatched from core/go orchestration. Pick up tasks in order.
 - [x] **Backward compatibility** -- `New()` delegates to `NewWithConfig(Config{Providers: []Provider{ProviderGemini}})`. Existing API unchanged. Test `TestNewBackwardCompatibility` verifies exact parity.
 - [x] **Runtime configuration** -- `SetQuota()` and `AddProvider()` allow modifying quotas after construction. Both are mutex-protected.
 
-## Phase 2: Persistent State
+## Phase 2: SQLite Persistent State
 
-- [ ] Currently stores state in YAML file -- not safe for multi-process access
-- [ ] Consider SQLite for concurrent read/write safety (WAL mode)
-- [ ] Add state recovery on restart (reload sliding window from persisted data)
+Current YAML persistence is single-process only. Phase 2 adds multi-process safe SQLite storage following the go-store pattern (`modernc.org/sqlite`, pure Go, no CGO).
+
+### 2.1 SQLite Backend
+
+- [ ] **Add `modernc.org/sqlite` dependency** — `go get modernc.org/sqlite`. Pure Go, compiles everywhere.
+- [ ] **Create `sqlite.go`** — Internal SQLite persistence layer:
+  - `type sqliteStore struct { db *sql.DB }` — wraps database/sql connection
+  - `func newSQLiteStore(dbPath string) (*sqliteStore, error)` — Open DB, set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, `db.SetMaxOpenConns(1)`. Create schema:
+    ```sql
+    CREATE TABLE IF NOT EXISTS quotas (
+        model TEXT PRIMARY KEY,
+        max_rpm INTEGER NOT NULL DEFAULT 0,
+        max_tpm INTEGER NOT NULL DEFAULT 0,
+        max_rpd INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS requests (
+        model TEXT NOT NULL,
+        ts INTEGER NOT NULL  -- UnixNano
+    );
+    CREATE TABLE IF NOT EXISTS tokens (
+        model TEXT NOT NULL,
+        ts INTEGER NOT NULL,  -- UnixNano
+        count INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS daily (
+        model TEXT PRIMARY KEY,
+        day_start INTEGER NOT NULL,
+        day_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_requests_model_ts ON requests(model, ts);
+    CREATE INDEX IF NOT EXISTS idx_tokens_model_ts ON tokens(model, ts);
+    ```
+  - `func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error` — UPSERT all quotas
+  - `func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error)` — SELECT all quotas
+  - `func (s *sqliteStore) saveState(state map[string]*UsageStats) error` — Transaction: DELETE old + INSERT requests/tokens/daily for each model
+  - `func (s *sqliteStore) loadState() (map[string]*UsageStats, error)` — SELECT and reconstruct UsageStats map
+  - `func (s *sqliteStore) close() error` — Close DB connection
+
+### 2.2 Wire Into RateLimiter
+
+- [ ] **Add `Backend` field to Config** — `Backend string` with values `"yaml"` (default), `"sqlite"`. Default `""` maps to `"yaml"` for backward compat.
+- [ ] **Update `Persist()` and `Load()`** — Check internal backend type. If SQLite, use `sqliteStore`; otherwise use existing YAML. Keep both paths working.
+- [ ] **Add `NewWithSQLite(dbPath string) (*RateLimiter, error)`** — Convenience constructor that creates a SQLite-backed limiter. Sets backend type, initialises DB.
+- [ ] **Graceful close** — Add `Close() error` method that closes SQLite DB if open. No-op for YAML backend.
+
+### 2.3 Tests
+
+- [ ] **SQLite basic tests** — newSQLiteStore, saveQuotas/loadQuotas round-trip, saveState/loadState round-trip, close.
+- [ ] **SQLite integration** — NewWithSQLite, RecordUsage → Persist → Load → verify state preserved. Same test matrix as existing YAML tests but with SQLite backend.
+- [ ] **Concurrent SQLite** — 10 goroutines × 100 ops (RecordUsage + CanSend + Persist + Load). Race-clean.
+- [ ] **YAML backward compat** — Existing tests must pass unchanged (still default to YAML).
+- [ ] **Migration helper** — `MigrateYAMLToSQLite(yamlPath, sqlitePath string) error` — reads YAML state, writes to SQLite. Test with sample YAML.
+- [ ] **Corrupt DB recovery** — Truncated DB file → graceful error, fresh start.
 
 ## Phase 3: Integration
 
