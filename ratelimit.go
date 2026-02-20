@@ -15,11 +15,46 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Provider identifies an LLM provider for quota profiles.
+type Provider string
+
+const (
+	// ProviderGemini is Google's Gemini family (default).
+	ProviderGemini Provider = "gemini"
+	// ProviderOpenAI is OpenAI's GPT/o-series family.
+	ProviderOpenAI Provider = "openai"
+	// ProviderAnthropic is Anthropic's Claude family.
+	ProviderAnthropic Provider = "anthropic"
+	// ProviderLocal is for local inference (Ollama, MLX, llama.cpp).
+	ProviderLocal Provider = "local"
+)
+
 // ModelQuota defines the rate limits for a specific model.
 type ModelQuota struct {
-	MaxRPM int `yaml:"max_rpm"` // Requests per minute
-	MaxTPM int `yaml:"max_tpm"` // Tokens per minute
+	MaxRPM int `yaml:"max_rpm"` // Requests per minute (0 = unlimited)
+	MaxTPM int `yaml:"max_tpm"` // Tokens per minute (0 = unlimited)
 	MaxRPD int `yaml:"max_rpd"` // Requests per day (0 = unlimited)
+}
+
+// ProviderProfile bundles model quotas for a provider.
+type ProviderProfile struct {
+	Provider Provider                `yaml:"provider"`
+	Models   map[string]ModelQuota   `yaml:"models"`
+}
+
+// Config controls RateLimiter initialisation.
+type Config struct {
+	// FilePath overrides the default state file location.
+	// If empty, defaults to ~/.core/ratelimits.yaml.
+	FilePath string `yaml:"file_path,omitempty"`
+
+	// Quotas sets per-model rate limits directly.
+	// These are merged on top of any provider profile defaults.
+	Quotas map[string]ModelQuota `yaml:"quotas,omitempty"`
+
+	// Providers lists provider profiles to load.
+	// If empty and Quotas is also empty, Gemini defaults are used.
+	Providers []Provider `yaml:"providers,omitempty"`
 }
 
 // TokenEntry records a token usage event.
@@ -44,27 +79,119 @@ type RateLimiter struct {
 	filePath string
 }
 
-// New creates a new RateLimiter with default quotas.
+// DefaultProfiles returns pre-configured quota profiles for each provider.
+// Values are based on published rate limits as of Feb 2026.
+func DefaultProfiles() map[Provider]ProviderProfile {
+	return map[Provider]ProviderProfile{
+		ProviderGemini: {
+			Provider: ProviderGemini,
+			Models: map[string]ModelQuota{
+				"gemini-3-pro-preview":   {MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 1000},
+				"gemini-3-flash-preview": {MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 1000},
+				"gemini-2.5-pro":         {MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 1000},
+				"gemini-2.0-flash":       {MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 0}, // Unlimited RPD
+				"gemini-2.0-flash-lite":  {MaxRPM: 0, MaxTPM: 0, MaxRPD: 0},         // Unlimited
+			},
+		},
+		ProviderOpenAI: {
+			Provider: ProviderOpenAI,
+			Models: map[string]ModelQuota{
+				"gpt-4o":       {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
+				"gpt-4o-mini":  {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
+				"gpt-4-turbo":  {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
+				"o1":           {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
+				"o1-mini":      {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
+				"o3-mini":      {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
+			},
+		},
+		ProviderAnthropic: {
+			Provider: ProviderAnthropic,
+			Models: map[string]ModelQuota{
+				"claude-opus-4":    {MaxRPM: 50, MaxTPM: 40000, MaxRPD: 0},
+				"claude-sonnet-4":  {MaxRPM: 50, MaxTPM: 40000, MaxRPD: 0},
+				"claude-haiku-3.5": {MaxRPM: 50, MaxTPM: 50000, MaxRPD: 0},
+			},
+		},
+		ProviderLocal: {
+			Provider: ProviderLocal,
+			Models: map[string]ModelQuota{
+				// Local inference has no external rate limits by default.
+				// Users can override per-model if their hardware requires throttling.
+			},
+		},
+	}
+}
+
+// New creates a new RateLimiter with Gemini defaults.
+// This preserves backward compatibility -- existing callers are unaffected.
 func New() (*RateLimiter, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
+	return NewWithConfig(Config{
+		Providers: []Provider{ProviderGemini},
+	})
+}
+
+// NewWithConfig creates a RateLimiter from explicit configuration.
+// If no providers or quotas are specified, Gemini defaults are used.
+func NewWithConfig(cfg Config) (*RateLimiter, error) {
+	filePath := cfg.FilePath
+	if filePath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		filePath = filepath.Join(home, ".core", "ratelimits.yaml")
 	}
 
 	rl := &RateLimiter{
 		Quotas:   make(map[string]ModelQuota),
 		State:    make(map[string]*UsageStats),
-		filePath: filepath.Join(home, ".core", "ratelimits.yaml"),
+		filePath: filePath,
 	}
 
-	// Default quotas based on Tier 1 observations (Feb 2026)
-	rl.Quotas["gemini-3-pro-preview"] = ModelQuota{MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 1000}
-	rl.Quotas["gemini-3-flash-preview"] = ModelQuota{MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 1000}
-	rl.Quotas["gemini-2.5-pro"] = ModelQuota{MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 1000}
-	rl.Quotas["gemini-2.0-flash"] = ModelQuota{MaxRPM: 150, MaxTPM: 1000000, MaxRPD: 0} // Unlimited RPD
-	rl.Quotas["gemini-2.0-flash-lite"] = ModelQuota{MaxRPM: 0, MaxTPM: 0, MaxRPD: 0}   // Unlimited
+	// Load provider profiles
+	profiles := DefaultProfiles()
+	providers := cfg.Providers
+
+	// If nothing specified at all, default to Gemini
+	if len(providers) == 0 && len(cfg.Quotas) == 0 {
+		providers = []Provider{ProviderGemini}
+	}
+
+	for _, p := range providers {
+		if profile, ok := profiles[p]; ok {
+			for model, quota := range profile.Models {
+				rl.Quotas[model] = quota
+			}
+		}
+	}
+
+	// Merge explicit quotas on top (allows overrides)
+	for model, quota := range cfg.Quotas {
+		rl.Quotas[model] = quota
+	}
 
 	return rl, nil
+}
+
+// SetQuota sets or updates the quota for a specific model at runtime.
+func (rl *RateLimiter) SetQuota(model string, quota ModelQuota) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.Quotas[model] = quota
+}
+
+// AddProvider loads all default quotas for a provider.
+// Existing quotas for models in the profile are overwritten.
+func (rl *RateLimiter) AddProvider(provider Provider) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	profiles := DefaultProfiles()
+	if profile, ok := profiles[provider]; ok {
+		for model, quota := range profile.Models {
+			rl.Quotas[model] = quota
+		}
+	}
 }
 
 // Load reads the state from disk.
