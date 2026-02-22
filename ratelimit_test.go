@@ -46,7 +46,7 @@ func TestCanSend(t *testing.T) {
 		model := "test-unlimited"
 		rl.Quotas[model] = ModelQuota{MaxRPM: 0, MaxTPM: 0, MaxRPD: 0}
 
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			rl.RecordUsage(model, 100, 100)
 		}
 		assert.True(t, rl.CanSend(model, 999999), "unlimited model should always allow sends")
@@ -122,7 +122,7 @@ func TestCanSend(t *testing.T) {
 		model := "test-rpd-unlimited"
 		rl.Quotas[model] = ModelQuota{MaxRPM: 10000, MaxTPM: 100000000, MaxRPD: 0}
 
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			rl.RecordUsage(model, 1, 1)
 		}
 		assert.True(t, rl.CanSend(model, 1), "RPD=0 should mean unlimited daily requests")
@@ -655,16 +655,14 @@ func TestConcurrentAccess(t *testing.T) {
 	goroutines := 20
 	opsPerGoroutine := 50
 
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < opsPerGoroutine; j++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range opsPerGoroutine {
 				rl.CanSend(model, 10)
 				rl.RecordUsage(model, 5, 5)
 				rl.Stats(model)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -682,36 +680,30 @@ func TestConcurrentResetAndRecord(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Writers
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 5 {
+		wg.Go(func() {
+			for range 100 {
 				rl.RecordUsage(model, 1, 1)
 			}
-		}()
+		})
 	}
 
 	// Resetters
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 20; j++ {
+	for range 3 {
+		wg.Go(func() {
+			for range 20 {
 				rl.Reset(model)
 			}
-		}()
+		})
 	}
 
 	// Readers
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 5 {
+		wg.Go(func() {
+			for range 100 {
 				rl.AllStats()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -763,7 +755,7 @@ func BenchmarkCanSend(b *testing.B) {
 	now := time.Now()
 	entries := make([]time.Time, 1000)
 	tokens := make([]TokenEntry, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		t := now.Add(-time.Duration(i) * time.Millisecond * 50) // spread over ~50 seconds
 		entries[i] = t
 		tokens[i] = TokenEntry{Time: t, Count: 10}
@@ -799,7 +791,7 @@ func BenchmarkCanSendConcurrent(b *testing.B) {
 
 	// Populate window
 	now := time.Now()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		rl.State[model] = &UsageStats{DayStart: now}
 		rl.RecordUsage(model, 10, 10)
 	}
@@ -1014,7 +1006,7 @@ func TestSetQuota(t *testing.T) {
 		rl := newTestLimiter(t)
 		var wg sync.WaitGroup
 
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			wg.Add(1)
 			go func(n int) {
 				defer wg.Done()
@@ -1080,7 +1072,7 @@ func TestAddProvider(t *testing.T) {
 			wg.Add(1)
 			go func(prov Provider) {
 				defer wg.Done()
-				for i := 0; i < 10; i++ {
+				for range 10 {
 					rl.AddProvider(prov)
 				}
 			}(p)
@@ -1114,7 +1106,7 @@ func TestConcurrentMultipleModels(t *testing.T) {
 		wg.Add(1)
 		go func(model string) {
 			defer wg.Done()
-			for i := 0; i < iterations; i++ {
+			for range iterations {
 				rl.CanSend(model, 10)
 				rl.RecordUsage(model, 10, 10)
 				rl.Stats(model)
@@ -1142,26 +1134,22 @@ func TestConcurrentPersistAndLoad(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Writers + persist
-	for g := 0; g < 3; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+	for range 3 {
+		wg.Go(func() {
+			for range 50 {
 				rl.RecordUsage(model, 10, 10)
 				_ = rl.Persist()
 			}
-		}()
+		})
 	}
 
 	// Loaders
-	for g := 0; g < 3; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+	for range 3 {
+		wg.Go(func() {
+			for range 50 {
 				_ = rl.Load()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -1181,21 +1169,19 @@ func TestConcurrentAllStatsAndRecordUsage(t *testing.T) {
 		wg.Add(1)
 		go func(model string) {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				rl.RecordUsage(model, 10, 10)
 			}
 		}(m)
 	}
 
 	// Read AllStats concurrently
-	for g := 0; g < 3; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+	for range 3 {
+		wg.Go(func() {
+			for range 50 {
 				_ = rl.AllStats()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -1208,25 +1194,21 @@ func TestConcurrentWaitForCapacityAndRecordUsage(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for g := 0; g < 5; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 5 {
+		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 			defer cancel()
 			_ = rl.WaitForCapacity(ctx, model, 10)
-		}()
+		})
 	}
 
 	// Record usage concurrently
-	for g := 0; g < 5; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 20; i++ {
+	for range 5 {
+		wg.Go(func() {
+			for range 20 {
 				rl.RecordUsage(model, 10, 10)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -1242,12 +1224,12 @@ func BenchmarkCanSendWithPrune(b *testing.B) {
 	// Pre-fill with a mix of old and new entries to trigger pruning
 	now := time.Now()
 	rl.State[model] = &UsageStats{DayStart: now}
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		old := now.Add(-2 * time.Minute)
 		rl.State[model].Requests = append(rl.State[model].Requests, old)
 		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: old, Count: 100})
 	}
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		recent := now.Add(-time.Duration(i) * time.Millisecond * 100)
 		rl.State[model].Requests = append(rl.State[model].Requests, recent)
 		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: recent, Count: 100})
@@ -1267,7 +1249,7 @@ func BenchmarkStats(b *testing.B) {
 
 	now := time.Now()
 	rl.State[model] = &UsageStats{DayStart: now, DayCount: 500}
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		t := now.Add(-time.Duration(i) * time.Millisecond * 50)
 		rl.State[model].Requests = append(rl.State[model].Requests, t)
 		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: t, Count: 100})
@@ -1287,7 +1269,7 @@ func BenchmarkAllStats(b *testing.B) {
 	for _, m := range models {
 		rl.Quotas[m] = ModelQuota{MaxRPM: 10000, MaxTPM: 100000000, MaxRPD: 100000}
 		rl.State[m] = &UsageStats{DayStart: now, DayCount: 200}
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			t := now.Add(-time.Duration(i) * time.Millisecond * 250)
 			rl.State[m].Requests = append(rl.State[m].Requests, t)
 			rl.State[m].Tokens = append(rl.State[m].Tokens, TokenEntry{Time: t, Count: 100})
@@ -1311,7 +1293,7 @@ func BenchmarkPersist(b *testing.B) {
 
 	now := time.Now()
 	rl.State[model] = &UsageStats{DayStart: now, DayCount: 100}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		t := now.Add(-time.Duration(i) * time.Second)
 		rl.State[model].Requests = append(rl.State[model].Requests, t)
 		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: t, Count: 100})

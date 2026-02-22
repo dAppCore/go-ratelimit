@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,8 +39,8 @@ type ModelQuota struct {
 
 // ProviderProfile bundles model quotas for a provider.
 type ProviderProfile struct {
-	Provider Provider                `yaml:"provider"`
-	Models   map[string]ModelQuota   `yaml:"models"`
+	Provider Provider              `yaml:"provider"`
+	Models   map[string]ModelQuota `yaml:"models"`
 }
 
 // Config controls RateLimiter initialisation.
@@ -101,12 +102,12 @@ func DefaultProfiles() map[Provider]ProviderProfile {
 		ProviderOpenAI: {
 			Provider: ProviderOpenAI,
 			Models: map[string]ModelQuota{
-				"gpt-4o":       {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
-				"gpt-4o-mini":  {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
-				"gpt-4-turbo":  {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
-				"o1":           {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
-				"o1-mini":      {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
-				"o3-mini":      {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
+				"gpt-4o":      {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
+				"gpt-4o-mini": {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
+				"gpt-4-turbo": {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
+				"o1":          {MaxRPM: 500, MaxTPM: 30000, MaxRPD: 0},
+				"o1-mini":     {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
+				"o3-mini":     {MaxRPM: 500, MaxTPM: 200000, MaxRPD: 0},
 			},
 		},
 		ProviderAnthropic: {
@@ -119,7 +120,7 @@ func DefaultProfiles() map[Provider]ProviderProfile {
 		},
 		ProviderLocal: {
 			Provider: ProviderLocal,
-			Models: map[string]ModelQuota{
+			Models:   map[string]ModelQuota{
 				// Local inference has no external rate limits by default.
 				// Users can override per-model if their hardware requires throttling.
 			},
@@ -164,16 +165,12 @@ func NewWithConfig(cfg Config) (*RateLimiter, error) {
 
 	for _, p := range providers {
 		if profile, ok := profiles[p]; ok {
-			for model, quota := range profile.Models {
-				rl.Quotas[model] = quota
-			}
+			maps.Copy(rl.Quotas, profile.Models)
 		}
 	}
 
 	// Merge explicit quotas on top (allows overrides)
-	for model, quota := range cfg.Quotas {
-		rl.Quotas[model] = quota
-	}
+	maps.Copy(rl.Quotas, cfg.Quotas)
 
 	return rl, nil
 }
@@ -193,9 +190,7 @@ func (rl *RateLimiter) AddProvider(provider Provider) {
 
 	profiles := DefaultProfiles()
 	if profile, ok := profiles[provider]; ok {
-		for model, quota := range profile.Models {
-			rl.Quotas[model] = quota
-		}
+		maps.Copy(rl.Quotas, profile.Models)
 	}
 }
 
@@ -227,18 +222,14 @@ func (rl *RateLimiter) loadSQLite() error {
 		return err
 	}
 	// Merge loaded quotas (loaded quotas override in-memory defaults).
-	for model, q := range quotas {
-		rl.Quotas[model] = q
-	}
+	maps.Copy(rl.Quotas, quotas)
 
 	state, err := rl.sqlite.loadState()
 	if err != nil {
 		return err
 	}
 	// Replace in-memory state with persisted state.
-	for model, s := range state {
-		rl.State[model] = s
-	}
+	maps.Copy(rl.State, state)
 	return nil
 }
 
@@ -545,14 +536,10 @@ func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) {
 	}
 	for _, p := range providers {
 		if profile, ok := profiles[p]; ok {
-			for model, quota := range profile.Models {
-				rl.Quotas[model] = quota
-			}
+			maps.Copy(rl.Quotas, profile.Models)
 		}
 	}
-	for model, quota := range cfg.Quotas {
-		rl.Quotas[model] = quota
-	}
+	maps.Copy(rl.Quotas, cfg.Quotas)
 
 	return rl, nil
 }

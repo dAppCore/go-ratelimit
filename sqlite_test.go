@@ -311,7 +311,7 @@ func TestSQLiteRecordUsageThenPersistReload_Good(t *testing.T) {
 	rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 100000, MaxRPD: 1000}
 
 	// Record multiple usages.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		rl.RecordUsage(model, 50, 50)
 	}
 
@@ -363,16 +363,14 @@ func TestSQLiteConcurrent_Good(t *testing.T) {
 
 	// Concurrent RecordUsage + CanSend + Persist (no Load, which would
 	// overwrite in-memory state and lose recordings between cycles).
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < opsPerGoroutine; j++ {
+	for range goroutines {
+		wg.Go(func() {
+			for range opsPerGoroutine {
 				rl.RecordUsage(model, 5, 5)
 				rl.CanSend(model, 10)
 				_ = rl.Persist()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -667,7 +665,7 @@ func BenchmarkSQLitePersist(b *testing.B) {
 
 	now := time.Now()
 	rl.State[model] = &UsageStats{DayStart: now, DayCount: 100}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		t := now.Add(-time.Duration(i) * time.Second)
 		rl.State[model].Requests = append(rl.State[model].Requests, t)
 		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: t, Count: 100})
@@ -692,7 +690,7 @@ func BenchmarkSQLiteLoad(b *testing.B) {
 
 	now := time.Now()
 	rl.State[model] = &UsageStats{DayStart: now, DayCount: 100}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		t := now.Add(-time.Duration(i) * time.Second)
 		rl.State[model].Requests = append(rl.State[model].Requests, t)
 		rl.State[model].Tokens = append(rl.State[model].Tokens, TokenEntry{Time: t, Count: 100})
