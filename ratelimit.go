@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -276,24 +278,14 @@ func (rl *RateLimiter) prune(model string) {
 	window := now.Add(-1 * time.Minute)
 
 	// Prune requests
-	validReqs := 0
-	for _, t := range stats.Requests {
-		if t.After(window) {
-			stats.Requests[validReqs] = t
-			validReqs++
-		}
-	}
-	stats.Requests = stats.Requests[:validReqs]
+	stats.Requests = slices.DeleteFunc(stats.Requests, func(t time.Time) bool {
+		return !t.After(window)
+	})
 
 	// Prune tokens
-	validTokens := 0
-	for _, t := range stats.Tokens {
-		if t.Time.After(window) {
-			stats.Tokens[validTokens] = t
-			validTokens++
-		}
-	}
-	stats.Tokens = stats.Tokens[:validTokens]
+	stats.Tokens = slices.DeleteFunc(stats.Tokens, func(t TokenEntry) bool {
+		return !t.Time.After(window)
+	})
 
 	// Reset daily counter if day has passed
 	if now.Sub(stats.DayStart) >= 24*time.Hour {
@@ -412,6 +404,30 @@ type ModelStats struct {
 	DayStart time.Time
 }
 
+// Models returns an iterator over all model names tracked by the limiter.
+func (rl *RateLimiter) Models() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		stats := rl.AllStats()
+		for m := range stats {
+			if !yield(m) {
+				return
+			}
+		}
+	}
+}
+
+// Iter returns an iterator over all model names and their current stats.
+func (rl *RateLimiter) Iter() iter.Seq2[string, ModelStats] {
+	return func(yield func(string, ModelStats) bool) {
+		stats := rl.AllStats()
+		for k, v := range stats {
+			if !yield(k, v) {
+				return
+			}
+		}
+	}
+}
+
 // Stats returns current stats for a model.
 func (rl *RateLimiter) Stats(model string) ModelStats {
 	rl.mu.Lock()
@@ -460,23 +476,12 @@ func (rl *RateLimiter) AllStats() map[string]ModelStats {
 	for m := range result {
 		// Prune inline
 		if s, ok := rl.State[m]; ok {
-			validReqs := 0
-			for _, t := range s.Requests {
-				if t.After(window) {
-					s.Requests[validReqs] = t
-					validReqs++
-				}
-			}
-			s.Requests = s.Requests[:validReqs]
-
-			validTokens := 0
-			for _, t := range s.Tokens {
-				if t.Time.After(window) {
-					s.Tokens[validTokens] = t
-					validTokens++
-				}
-			}
-			s.Tokens = s.Tokens[:validTokens]
+			s.Requests = slices.DeleteFunc(s.Requests, func(t time.Time) bool {
+				return !t.After(window)
+			})
+			s.Tokens = slices.DeleteFunc(s.Tokens, func(t TokenEntry) bool {
+				return !t.Time.After(window)
+			})
 
 			if now.Sub(s.DayStart) >= 24*time.Hour {
 				s.DayStart = now

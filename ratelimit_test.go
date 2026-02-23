@@ -768,7 +768,7 @@ func BenchmarkCanSend(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rl.CanSend(model, 100)
 	}
 }
@@ -779,7 +779,7 @@ func BenchmarkRecordUsage(b *testing.B) {
 	rl.Quotas[model] = ModelQuota{MaxRPM: 100000, MaxTPM: 1000000000, MaxRPD: 1000000}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rl.RecordUsage(model, 100, 100)
 	}
 }
@@ -1237,7 +1237,7 @@ func BenchmarkCanSendWithPrune(b *testing.B) {
 	rl.State[model].DayCount = 1000
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rl.CanSend(model, 100)
 	}
 }
@@ -1256,7 +1256,7 @@ func BenchmarkStats(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rl.Stats(model)
 	}
 }
@@ -1277,7 +1277,7 @@ func BenchmarkAllStats(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rl.AllStats()
 	}
 }
@@ -1300,7 +1300,7 @@ func BenchmarkPersist(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = rl.Persist()
 	}
 }

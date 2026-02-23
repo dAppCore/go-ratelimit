@@ -102,7 +102,7 @@ assert anything beyond absence of data races (the race detector does the work):
 
 ```go
 var wg sync.WaitGroup
-for i := 0; i < 20; i++ {
+for i := range 20 {
     wg.Add(1)
     go func() {
         defer wg.Done()
