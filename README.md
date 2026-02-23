@@ -1,3 +1,7 @@
+[![Go Reference](https://pkg.go.dev/badge/forge.lthn.ai/core/go-ratelimit.svg)](https://pkg.go.dev/forge.lthn.ai/core/go-ratelimit)
+[![License: EUPL-1.2](https://img.shields.io/badge/License-EUPL--1.2-blue.svg)](LICENSE.md)
+[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go)](go.mod)
+
 # go-ratelimit
 
 Provider-agnostic sliding window rate limiter for LLM API calls. Enforces requests per minute (RPM), tokens per minute (TPM), and requests per day (RPD) quotas per model using an in-memory sliding window. Ships with default quota profiles for Gemini, OpenAI, Anthropic, and a local inference provider. State persists across process restarts via YAML (single-process) or SQLite (multi-process, WAL mode). Includes a Gemini-specific token counting helper and a YAML-to-SQLite migration path.
