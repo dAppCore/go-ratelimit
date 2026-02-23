@@ -569,6 +569,9 @@ func TestPersistAndLoad(t *testing.T) {
 	})
 
 	t.Run("load from unreadable file returns error", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("chmod 000 does not restrict root")
+		}
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "unreadable.yaml")
 		require.NoError(t, os.WriteFile(path, []byte("quotas: {}"), 0644))
@@ -600,6 +603,9 @@ func TestPersistAndLoad(t *testing.T) {
 	})
 
 	t.Run("persist to unwritable directory returns error", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("chmod 0555 does not restrict root")
+		}
 		tmpDir := t.TempDir()
 		unwritable := filepath.Join(tmpDir, "readonly")
 		require.NoError(t, os.MkdirAll(unwritable, 0555))
