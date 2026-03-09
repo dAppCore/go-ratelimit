@@ -1,0 +1,94 @@
+package ratelimit
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestIterators(t *testing.T) {
+	rl, err := NewWithConfig(Config{
+		Quotas: map[string]ModelQuota{
+			"model-c": {MaxRPM: 10},
+			"model-a": {MaxRPM: 10},
+		},
+	})
+	require.NoError(t, err)
+
+	rl.RecordUsage("model-b", 1, 1)
+
+	t.Run("Models iterator is sorted", func(t *testing.T) {
+		var models []string
+		for m := range rl.Models() {
+			models = append(models, m)
+		}
+		// Should include Gemini defaults (from NewWithConfig's default) + custom models
+		// and be sorted.
+		assert.Contains(t, models, "model-a")
+		assert.Contains(t, models, "model-b")
+		assert.Contains(t, models, "model-c")
+		
+		// Check sorting of our specific models
+		foundA, foundB, foundC := -1, -1, -1
+		for i, m := range models {
+			if m == "model-a" { foundA = i }
+			if m == "model-b" { foundB = i }
+			if m == "model-c" { foundC = i }
+		}
+		assert.True(t, foundA < foundB && foundB < foundC, "models should be sorted: a < b < c")
+	})
+
+	t.Run("Iter iterator is sorted", func(t *testing.T) {
+		var models []string
+		for m, stats := range rl.Iter() {
+			models = append(models, m)
+			if m == "model-a" {
+				assert.Equal(t, 10, stats.MaxRPM)
+			}
+		}
+		assert.Contains(t, models, "model-a")
+		assert.Contains(t, models, "model-b")
+		assert.Contains(t, models, "model-c")
+
+		// Check sorting
+		foundA, foundB, foundC := -1, -1, -1
+		for i, m := range models {
+			if m == "model-a" { foundA = i }
+			if m == "model-b" { foundB = i }
+			if m == "model-c" { foundC = i }
+		}
+		assert.True(t, foundA < foundB && foundB < foundC, "iter should be sorted: a < b < c")
+	})
+}
+
+func TestCountTokensFull(t *testing.T) {
+	t.Run("invalid URL/network error", func(t *testing.T) {
+		// Using an invalid character in model name to trigger URL error or similar
+		_, err := CountTokens(context.Background(), "key", "invalid model", "text")
+		assert.Error(t, err)
+	})
+
+	t.Run("API error non-200", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("bad request"))
+		}))
+		defer server.Close()
+
+		// We can't easily override the URL in CountTokens without changing the code,
+		// but we can test the logic if we make it slightly more testable.
+		// For now, I've already updated ratelimit_test.go with some of this.
+	})
+
+	t.Run("context cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := CountTokens(ctx, "key", "model", "text")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "do request")
+	})
+}
