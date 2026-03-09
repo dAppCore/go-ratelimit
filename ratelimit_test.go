@@ -716,6 +716,30 @@ func TestConcurrentResetAndRecord(t *testing.T) {
 	// No assertion needed -- if we get here without -race flagging, mutex is sound
 }
 
+func TestBackgroundPrune(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "prune-me"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 100}
+
+	// Set state with old usage.
+	old := time.Now().Add(-2 * time.Minute)
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{old},
+		Tokens:   []TokenEntry{{Time: old, Count: 100}},
+	}
+
+	stop := rl.BackgroundPrune(10 * time.Millisecond)
+	defer stop()
+
+	// Wait for pruner to run.
+	assert.Eventually(t, func() bool {
+		rl.mu.Lock()
+		defer rl.mu.Unlock()
+		_, exists := rl.State[model]
+		return !exists
+	}, 1*time.Second, 20*time.Millisecond, "old empty state should be pruned")
+}
+
 // --- Phase 0: CountTokens (with mock HTTP server) ---
 
 func TestCountTokens(t *testing.T) {
@@ -730,10 +754,8 @@ func TestCountTokens(t *testing.T) {
 		}))
 		defer server.Close()
 
-		// We need to override the URL. Since CountTokens hardcodes the Google API URL,
-		// we test it via the exported function with a test server.
-		// For proper unit testing, we would need to make the base URL configurable.
-		// For now, test the error paths that don't require a real API.
+		// For testing purposes, we would need to make the base URL configurable.
+		// Since we're just checking the signature and basic logic, we test the error paths.
 	})
 
 	t.Run("API error returns error", func(t *testing.T) {
@@ -743,9 +765,7 @@ func TestCountTokens(t *testing.T) {
 		}))
 		defer server.Close()
 
-		// Can't test directly due to hardcoded URL, but we can verify error
-		// handling with an unreachable endpoint
-		_, err := CountTokens("fake-key", "test-model", "hello")
+		_, err := CountTokens(context.Background(), "fake-key", "test-model", "hello")
 		assert.Error(t, err, "should fail with invalid API endpoint")
 	})
 }

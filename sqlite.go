@@ -129,7 +129,8 @@ func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) {
 }
 
 // saveState writes all usage state to SQLite in a single transaction.
-// It deletes existing rows and inserts fresh data for each model.
+// It uses a truncate-and-insert approach for simplicity in this version,
+// but ensures atomicity via a single transaction.
 func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -137,7 +138,7 @@ func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 	}
 	defer tx.Rollback()
 
-	// Clear existing state.
+	// Clear existing state in the transaction.
 	if _, err := tx.Exec("DELETE FROM requests"); err != nil {
 		return fmt.Errorf("ratelimit.saveState: clear requests: %w", err)
 	}
@@ -182,7 +183,10 @@ func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ratelimit.saveState: commit: %w", err)
+	}
+	return nil
 }
 
 // loadState reconstructs the UsageStats map from SQLite tables.
