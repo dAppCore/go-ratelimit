@@ -1,9 +1,14 @@
+---
+title: Development Guide
+description: How to build, test, and contribute to go-ratelimit -- prerequisites, test patterns, coding standards, and commit conventions.
+---
+
 # Development Guide
 
 ## Prerequisites
 
-- Go 1.25 or later (the module declares `go 1.25.5`)
-- No CGO required — `modernc.org/sqlite` is a pure Go port
+- **Go 1.26** or later (the module declares `go 1.26.0`)
+- No CGO required -- `modernc.org/sqlite` is a pure Go port
 
 No C toolchain, no system SQLite library, no external build tools. A plain
 `go build ./...` is sufficient.
@@ -34,6 +39,9 @@ go test -bench=BenchmarkCanSend -benchmem ./...
 # Check for vet issues
 go vet ./...
 
+# Lint (requires golangci-lint)
+golangci-lint run ./...
+
 # Tidy dependencies
 go mod tidy
 ```
@@ -43,31 +51,35 @@ must produce no errors or warnings before a commit is pushed.
 
 ---
 
-## Test Patterns
+## Test Organisation
 
-### File Organisation
+### File Layout
 
-- `ratelimit_test.go` — Phase 0 (core logic) and Phase 1 (provider profiles)
-- `sqlite_test.go` — Phase 2 (SQLite backend)
+| File | Scope |
+|------|-------|
+| `ratelimit_test.go` | Core sliding window logic, provider profiles, concurrency, benchmarks |
+| `sqlite_test.go` | SQLite backend, migration, concurrent persistence |
+| `error_test.go` | SQLite and YAML error paths |
+| `iter_test.go` | `Models()` and `Iter()` iterators, `CountTokens` edge cases |
 
-Both files are in `package ratelimit` (white-box tests) so they can access
+All test files are in `package ratelimit` (white-box tests), giving access to
 unexported fields and methods such as `prune()`, `filePath`, and `sqlite`.
 
 ### Naming Convention
 
 SQLite tests follow the `_Good`, `_Bad`, `_Ugly` suffix pattern:
 
-- `_Good` — happy path
-- `_Bad` — expected error conditions (invalid paths, corrupt input)
-- `_Ugly` — panic-adjacent edge cases (corrupt DB files, truncated files)
+- `_Good` -- happy path
+- `_Bad` -- expected error conditions (invalid paths, corrupt input)
+- `_Ugly` -- panic-adjacent edge cases (corrupt database files, truncated files)
 
-Core logic tests use plain descriptive names without suffixes, grouped by
-method with table-driven subtests.
+Core logic tests use plain descriptive names without suffixes, grouped by method
+with table-driven subtests.
 
-### Test Helpers
+### Test Helper
 
-`newTestLimiter(t *testing.T)` creates a `RateLimiter` with Gemini defaults and
-redirects the YAML file path into `t.TempDir()`:
+`newTestLimiter(t)` creates a `RateLimiter` with Gemini defaults and redirects
+the YAML file path into `t.TempDir()`:
 
 ```go
 func newTestLimiter(t *testing.T) *RateLimiter {
@@ -86,43 +98,64 @@ after each test completes.
 
 Tests use `github.com/stretchr/testify` exclusively:
 
-- `require.NoError(t, err)` — fail immediately on setup errors
-- `assert.NoError(t, err)` — record failure but continue
-- `assert.Equal(t, expected, actual, "message")` — prefer over raw comparisons
-- `assert.True / assert.False` — for boolean checks
-- `assert.Empty / assert.Len` — for slice length checks
-- `assert.ErrorIs(t, err, context.DeadlineExceeded)` — for sentinel errors
+- `require.NoError(t, err)` -- fail immediately on setup errors
+- `assert.NoError(t, err)` -- record failure but continue
+- `assert.Equal(t, expected, actual, "message")` -- prefer over raw comparisons
+- `assert.True` / `assert.False` -- for boolean checks
+- `assert.Empty` / `assert.Len` -- for slice length checks
+- `assert.ErrorIs(t, err, target)` -- for sentinel errors
 
 Do not use `t.Error`, `t.Fatal`, or `t.Log` directly.
 
-### Race Tests
+### Concurrency Tests
 
-Concurrency tests spin up goroutines and use `sync.WaitGroup`. They do not
-assert anything beyond absence of data races (the race detector does the work):
+Race tests spin up goroutines and use `sync.WaitGroup`. Some assert specific
+outcomes (e.g., correct RPD count after concurrent recordings), while others
+rely solely on the race detector to catch data races:
 
 ```go
 var wg sync.WaitGroup
-for i := range 20 {
-    wg.Add(1)
-    go func() {
-        defer wg.Done()
-        // concurrent operations
-    }()
+for range 20 {
+    wg.Go(func() {
+        for range 50 {
+            rl.CanSend(model, 10)
+            rl.RecordUsage(model, 5, 5)
+            rl.Stats(model)
+        }
+    })
 }
 wg.Wait()
 ```
 
-Run every concurrency test with `-race`. The CI baseline is `go test -race ./...`
-clean.
+Always run concurrency tests with `-race`.
+
+### Benchmarks
+
+The following benchmarks are included:
+
+| Benchmark | What it measures |
+|-----------|------------------|
+| `BenchmarkCanSend` | CanSend with a 1,000-entry sliding window |
+| `BenchmarkRecordUsage` | Recording usage on a single model |
+| `BenchmarkCanSendConcurrent` | Parallel CanSend across goroutines |
+| `BenchmarkCanSendWithPrune` | CanSend with 500 old + 500 new entries |
+| `BenchmarkStats` | Stats retrieval with a 1,000-entry window |
+| `BenchmarkAllStats` | AllStats across 5 models x 200 entries each |
+| `BenchmarkPersist` | YAML persistence I/O |
+| `BenchmarkSQLitePersist` | SQLite persistence I/O |
+| `BenchmarkSQLiteLoad` | SQLite state loading |
 
 ### Coverage
 
-Current coverage: 95.1%. The remaining 5% consists of three paths that cannot
-be covered in unit tests without modifying the production code:
+Current coverage: 95.1%. The remaining paths cannot be covered in unit tests
+without modifying production code:
 
-1. `CountTokens` success path — hardcoded Google API URL requires network access
-2. `yaml.Marshal` error path in `Persist()` — cannot be triggered with valid Go structs
-3. `os.UserHomeDir()` error path in `NewWithConfig()` — requires unsetting `$HOME`
+1. `CountTokens` success path -- the Google API URL is hardcoded; unit tests
+   cannot intercept the HTTP call without URL injection support.
+2. `yaml.Marshal` error path in `Persist()` -- `yaml.Marshal` does not fail on
+   valid Go structs.
+3. `os.UserHomeDir()` error path in `NewWithConfig()` -- triggered only when
+   `$HOME` is unset, which test infrastructure prevents.
 
 Do not lower coverage below 95% without a documented reason.
 
@@ -137,26 +170,25 @@ Do not use American spellings in identifiers, comments, or documentation.
 
 ### Go Style
 
-- All exported types, functions, and fields must have doc comments
-- Error strings must be lowercase and not end with punctuation (Go convention)
-- Contextual errors use `fmt.Errorf("package.Function: what: %w", err)` — the
-  prefix `ratelimit.` is included so errors identify their origin clearly
-- No `init()` functions
-- No global mutable state outside of `DefaultProfiles()` (which returns a fresh
-  map on each call)
+- All exported types, functions, and fields must have doc comments.
+- Error strings must be lowercase and not end with punctuation (Go convention).
+- Contextual errors use `fmt.Errorf("ratelimit.Function: what: %w", err)` so
+  errors identify their origin clearly.
+- No `init()` functions.
+- No global mutable state. `DefaultProfiles()` returns a fresh map on each call.
 
 ### Mutex Discipline
 
 The `RateLimiter.mu` mutex is the only synchronisation primitive. Rules:
 
-- Methods that call `prune()` always acquire the write lock (`mu.Lock()`),
-  even if they appear read-only, because `prune()` mutates slices
-- `Persist()` acquires only the read lock (`mu.RLock()`) because it reads a
-  snapshot of state
+- Methods that call `prune()` always acquire the write lock (`mu.Lock()`), even
+  if they appear read-only, because `prune()` mutates state slices.
+- `Persist()` acquires the write lock briefly to clone state, then releases it
+  before performing I/O.
 - Lock acquisition always happens at the top of the public method, never inside
-  a helper — helpers document "Caller must hold the lock"
-- Never call a public method from inside another public method while holding
-  the lock (deadlock risk)
+  a helper. Helpers document "Caller must hold the lock".
+- Never call a public method from inside another public method while holding the
+  lock (deadlock risk).
 
 ### Dependencies
 
@@ -175,9 +207,8 @@ client libraries; the existing `CountTokens` function uses the standard library.
 
 ## Licence
 
-EUPL-1.2. Every new source file must carry the standard header if the project
-adopts per-file headers in future. Confirm with the project lead before adding
-files under a different licence.
+EUPL-1.2. Confirm with the project lead before adding files under a different
+licence.
 
 ---
 
@@ -205,3 +236,17 @@ Co-Authored-By: Virgil <virgil@lethean.io>
 
 Commits must not be pushed unless `go test -race ./...` and `go vet ./...` both
 pass. `go mod tidy` must produce no changes.
+
+---
+
+## Linting
+
+The project uses `golangci-lint` with the following enabled linters (see
+`.golangci.yml`):
+
+- `govet`, `errcheck`, `staticcheck`, `unused`, `gosimple`
+- `ineffassign`, `typecheck`, `gocritic`, `gofmt`
+
+Disabled linters: `exhaustive`, `wrapcheck`.
+
+Run `golangci-lint run ./...` to check before committing.
