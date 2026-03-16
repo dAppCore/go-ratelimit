@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	coreerr "forge.lthn.ai/core/go-log"
 	coreio "forge.lthn.ai/core/go-io"
 	"gopkg.in/yaml.v3"
 )
@@ -256,10 +257,10 @@ func (rl *RateLimiter) Persist() error {
 
 	if sqlite != nil {
 		if err := sqlite.saveQuotas(quotas); err != nil {
-			return fmt.Errorf("ratelimit.Persist: sqlite quotas: %w", err)
+			return coreerr.E("ratelimit.Persist", "sqlite quotas", err)
 		}
 		if err := sqlite.saveState(state); err != nil {
-			return fmt.Errorf("ratelimit.Persist: sqlite state: %w", err)
+			return coreerr.E("ratelimit.Persist", "sqlite state", err)
 		}
 		return nil
 	}
@@ -274,11 +275,11 @@ func (rl *RateLimiter) Persist() error {
 		State:  state,
 	})
 	if err != nil {
-		return fmt.Errorf("ratelimit.Persist: marshal: %w", err)
+		return coreerr.E("ratelimit.Persist", "marshal", err)
 	}
 
 	if err := coreio.Local.Write(filePath, string(data)); err != nil {
-		return fmt.Errorf("ratelimit.Persist: write: %w", err)
+		return coreerr.E("ratelimit.Persist", "write", err)
 	}
 	return nil
 }
@@ -617,12 +618,12 @@ func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
 	// Load from YAML.
 	content, err := coreio.Local.Read(yamlPath)
 	if err != nil {
-		return fmt.Errorf("ratelimit.MigrateYAMLToSQLite: read: %w", err)
+		return coreerr.E("ratelimit.MigrateYAMLToSQLite", "read", err)
 	}
 
 	var rl RateLimiter
 	if err := yaml.Unmarshal([]byte(content), &rl); err != nil {
-		return fmt.Errorf("ratelimit.MigrateYAMLToSQLite: unmarshal: %w", err)
+		return coreerr.E("ratelimit.MigrateYAMLToSQLite", "unmarshal", err)
 	}
 
 	// Write to SQLite.
@@ -661,32 +662,32 @@ func CountTokens(ctx context.Context, apiKey, model, text string) (int, error) {
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return 0, fmt.Errorf("ratelimit.CountTokens: marshal request: %w", err)
+		return 0, coreerr.E("ratelimit.CountTokens", "marshal request", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return 0, fmt.Errorf("ratelimit.CountTokens: new request: %w", err)
+		return 0, coreerr.E("ratelimit.CountTokens", "new request", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("ratelimit.CountTokens: do request: %w", err)
+		return 0, coreerr.E("ratelimit.CountTokens", "do request", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("ratelimit.CountTokens: API error (status %d): %s", resp.StatusCode, string(body))
+		return 0, coreerr.E("ratelimit.CountTokens", fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)), nil)
 	}
 
 	var result struct {
 		TotalTokens int `json:"totalTokens"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, fmt.Errorf("ratelimit.CountTokens: decode response: %w", err)
+		return 0, coreerr.E("ratelimit.CountTokens", "decode response", err)
 	}
 
 	return result.TotalTokens, nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	coreerr "forge.lthn.ai/core/go-log"
 	_ "modernc.org/sqlite"
 )
 
@@ -19,7 +20,7 @@ type sqliteStore struct {
 func newSQLiteStore(dbPath string) (*sqliteStore, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("ratelimit.newSQLiteStore: open: %w", err)
+		return nil, coreerr.E("ratelimit.newSQLiteStore", "open", err)
 	}
 
 	// Single connection for PRAGMA consistency.
@@ -27,11 +28,11 @@ func newSQLiteStore(dbPath string) (*sqliteStore, error) {
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("ratelimit.newSQLiteStore: WAL: %w", err)
+		return nil, coreerr.E("ratelimit.newSQLiteStore", "WAL", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("ratelimit.newSQLiteStore: busy_timeout: %w", err)
+		return nil, coreerr.E("ratelimit.newSQLiteStore", "busy_timeout", err)
 	}
 
 	if err := createSchema(db); err != nil {
@@ -71,7 +72,7 @@ func createSchema(db *sql.DB) error {
 
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("ratelimit.createSchema: %w", err)
+			return coreerr.E("ratelimit.createSchema", "exec", err)
 		}
 	}
 	return nil
@@ -81,7 +82,7 @@ func createSchema(db *sql.DB) error {
 func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("ratelimit.saveQuotas: begin: %w", err)
+		return coreerr.E("ratelimit.saveQuotas", "begin", err)
 	}
 	defer tx.Rollback()
 
@@ -92,13 +93,13 @@ func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error {
 			max_tpm = excluded.max_tpm,
 			max_rpd = excluded.max_rpd`)
 	if err != nil {
-		return fmt.Errorf("ratelimit.saveQuotas: prepare: %w", err)
+		return coreerr.E("ratelimit.saveQuotas", "prepare", err)
 	}
 	defer stmt.Close()
 
 	for model, q := range quotas {
 		if _, err := stmt.Exec(model, q.MaxRPM, q.MaxTPM, q.MaxRPD); err != nil {
-			return fmt.Errorf("ratelimit.saveQuotas: exec %s: %w", model, err)
+			return coreerr.E("ratelimit.saveQuotas", fmt.Sprintf("exec %s", model), err)
 		}
 	}
 
@@ -109,7 +110,7 @@ func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error {
 func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) {
 	rows, err := s.db.Query("SELECT model, max_rpm, max_tpm, max_rpd FROM quotas")
 	if err != nil {
-		return nil, fmt.Errorf("ratelimit.loadQuotas: query: %w", err)
+		return nil, coreerr.E("ratelimit.loadQuotas", "query", err)
 	}
 	defer rows.Close()
 
@@ -118,12 +119,12 @@ func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) {
 		var model string
 		var q ModelQuota
 		if err := rows.Scan(&model, &q.MaxRPM, &q.MaxTPM, &q.MaxRPD); err != nil {
-			return nil, fmt.Errorf("ratelimit.loadQuotas: scan: %w", err)
+			return nil, coreerr.E("ratelimit.loadQuotas", "scan", err)
 		}
 		result[model] = q
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ratelimit.loadQuotas: rows: %w", err)
+		return nil, coreerr.E("ratelimit.loadQuotas", "rows", err)
 	}
 	return result, nil
 }
@@ -134,57 +135,57 @@ func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) {
 func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("ratelimit.saveState: begin: %w", err)
+		return coreerr.E("ratelimit.saveState", "begin", err)
 	}
 	defer tx.Rollback()
 
 	// Clear existing state in the transaction.
 	if _, err := tx.Exec("DELETE FROM requests"); err != nil {
-		return fmt.Errorf("ratelimit.saveState: clear requests: %w", err)
+		return coreerr.E("ratelimit.saveState", "clear requests", err)
 	}
 	if _, err := tx.Exec("DELETE FROM tokens"); err != nil {
-		return fmt.Errorf("ratelimit.saveState: clear tokens: %w", err)
+		return coreerr.E("ratelimit.saveState", "clear tokens", err)
 	}
 	if _, err := tx.Exec("DELETE FROM daily"); err != nil {
-		return fmt.Errorf("ratelimit.saveState: clear daily: %w", err)
+		return coreerr.E("ratelimit.saveState", "clear daily", err)
 	}
 
 	reqStmt, err := tx.Prepare("INSERT INTO requests (model, ts) VALUES (?, ?)")
 	if err != nil {
-		return fmt.Errorf("ratelimit.saveState: prepare requests: %w", err)
+		return coreerr.E("ratelimit.saveState", "prepare requests", err)
 	}
 	defer reqStmt.Close()
 
 	tokStmt, err := tx.Prepare("INSERT INTO tokens (model, ts, count) VALUES (?, ?, ?)")
 	if err != nil {
-		return fmt.Errorf("ratelimit.saveState: prepare tokens: %w", err)
+		return coreerr.E("ratelimit.saveState", "prepare tokens", err)
 	}
 	defer tokStmt.Close()
 
 	dayStmt, err := tx.Prepare("INSERT INTO daily (model, day_start, day_count) VALUES (?, ?, ?)")
 	if err != nil {
-		return fmt.Errorf("ratelimit.saveState: prepare daily: %w", err)
+		return coreerr.E("ratelimit.saveState", "prepare daily", err)
 	}
 	defer dayStmt.Close()
 
 	for model, stats := range state {
 		for _, t := range stats.Requests {
 			if _, err := reqStmt.Exec(model, t.UnixNano()); err != nil {
-				return fmt.Errorf("ratelimit.saveState: insert request %s: %w", model, err)
+				return coreerr.E("ratelimit.saveState", fmt.Sprintf("insert request %s", model), err)
 			}
 		}
 		for _, te := range stats.Tokens {
 			if _, err := tokStmt.Exec(model, te.Time.UnixNano(), te.Count); err != nil {
-				return fmt.Errorf("ratelimit.saveState: insert token %s: %w", model, err)
+				return coreerr.E("ratelimit.saveState", fmt.Sprintf("insert token %s", model), err)
 			}
 		}
 		if _, err := dayStmt.Exec(model, stats.DayStart.UnixNano(), stats.DayCount); err != nil {
-			return fmt.Errorf("ratelimit.saveState: insert daily %s: %w", model, err)
+			return coreerr.E("ratelimit.saveState", fmt.Sprintf("insert daily %s", model), err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("ratelimit.saveState: commit: %w", err)
+		return coreerr.E("ratelimit.saveState", "commit", err)
 	}
 	return nil
 }
@@ -196,7 +197,7 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 	// Load daily counters first (these define which models have state).
 	rows, err := s.db.Query("SELECT model, day_start, day_count FROM daily")
 	if err != nil {
-		return nil, fmt.Errorf("ratelimit.loadState: query daily: %w", err)
+		return nil, coreerr.E("ratelimit.loadState", "query daily", err)
 	}
 	defer rows.Close()
 
@@ -205,7 +206,7 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 		var dayStartNano int64
 		var dayCount int
 		if err := rows.Scan(&model, &dayStartNano, &dayCount); err != nil {
-			return nil, fmt.Errorf("ratelimit.loadState: scan daily: %w", err)
+			return nil, coreerr.E("ratelimit.loadState", "scan daily", err)
 		}
 		result[model] = &UsageStats{
 			DayStart: time.Unix(0, dayStartNano),
@@ -213,13 +214,13 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ratelimit.loadState: daily rows: %w", err)
+		return nil, coreerr.E("ratelimit.loadState", "daily rows", err)
 	}
 
 	// Load requests.
 	reqRows, err := s.db.Query("SELECT model, ts FROM requests ORDER BY ts")
 	if err != nil {
-		return nil, fmt.Errorf("ratelimit.loadState: query requests: %w", err)
+		return nil, coreerr.E("ratelimit.loadState", "query requests", err)
 	}
 	defer reqRows.Close()
 
@@ -227,7 +228,7 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 		var model string
 		var tsNano int64
 		if err := reqRows.Scan(&model, &tsNano); err != nil {
-			return nil, fmt.Errorf("ratelimit.loadState: scan requests: %w", err)
+			return nil, coreerr.E("ratelimit.loadState", "scan requests", err)
 		}
 		if _, ok := result[model]; !ok {
 			result[model] = &UsageStats{}
@@ -235,13 +236,13 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 		result[model].Requests = append(result[model].Requests, time.Unix(0, tsNano))
 	}
 	if err := reqRows.Err(); err != nil {
-		return nil, fmt.Errorf("ratelimit.loadState: request rows: %w", err)
+		return nil, coreerr.E("ratelimit.loadState", "request rows", err)
 	}
 
 	// Load tokens.
 	tokRows, err := s.db.Query("SELECT model, ts, count FROM tokens ORDER BY ts")
 	if err != nil {
-		return nil, fmt.Errorf("ratelimit.loadState: query tokens: %w", err)
+		return nil, coreerr.E("ratelimit.loadState", "query tokens", err)
 	}
 	defer tokRows.Close()
 
@@ -250,7 +251,7 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 		var tsNano int64
 		var count int
 		if err := tokRows.Scan(&model, &tsNano, &count); err != nil {
-			return nil, fmt.Errorf("ratelimit.loadState: scan tokens: %w", err)
+			return nil, coreerr.E("ratelimit.loadState", "scan tokens", err)
 		}
 		if _, ok := result[model]; !ok {
 			result[model] = &UsageStats{}
@@ -261,7 +262,7 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 		})
 	}
 	if err := tokRows.Err(); err != nil {
-		return nil, fmt.Errorf("ratelimit.loadState: token rows: %w", err)
+		return nil, coreerr.E("ratelimit.loadState", "token rows", err)
 	}
 
 	return result, nil

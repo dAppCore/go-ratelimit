@@ -4,12 +4,12 @@ go 1.26.0
 
 require (
 	forge.lthn.ai/core/go-io v0.1.2
+	forge.lthn.ai/core/go-log v0.0.2
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1
 )
 
 require (
-	forge.lthn.ai/core/go-log v0.0.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
