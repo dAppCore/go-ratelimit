@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	coreio "forge.lthn.ai/core/go-io"
 	"gopkg.in/yaml.v3"
 )
 
@@ -205,7 +206,7 @@ func (rl *RateLimiter) Load() error {
 		return rl.loadSQLite()
 	}
 
-	data, err := os.ReadFile(rl.filePath)
+	content, err := coreio.Local.Read(rl.filePath)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -213,7 +214,7 @@ func (rl *RateLimiter) Load() error {
 		return err
 	}
 
-	return yaml.Unmarshal(data, rl)
+	return yaml.Unmarshal([]byte(content), rl)
 }
 
 // loadSQLite reads quotas and state from the SQLite backend.
@@ -276,12 +277,7 @@ func (rl *RateLimiter) Persist() error {
 		return fmt.Errorf("ratelimit.Persist: marshal: %w", err)
 	}
 
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("ratelimit.Persist: mkdir: %w", err)
-	}
-
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := coreio.Local.Write(filePath, string(data)); err != nil {
 		return fmt.Errorf("ratelimit.Persist: write: %w", err)
 	}
 	return nil
@@ -619,13 +615,13 @@ func (rl *RateLimiter) Close() error {
 // database is created if it does not exist.
 func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
 	// Load from YAML.
-	data, err := os.ReadFile(yamlPath)
+	content, err := coreio.Local.Read(yamlPath)
 	if err != nil {
 		return fmt.Errorf("ratelimit.MigrateYAMLToSQLite: read: %w", err)
 	}
 
 	var rl RateLimiter
-	if err := yaml.Unmarshal(data, &rl); err != nil {
+	if err := yaml.Unmarshal([]byte(content), &rl); err != nil {
 		return fmt.Errorf("ratelimit.MigrateYAMLToSQLite: unmarshal: %w", err)
 	}
 
