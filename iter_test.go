@@ -65,6 +65,39 @@ func TestIterators(t *testing.T) {
 	})
 }
 
+func TestIterEarlyBreak(t *testing.T) {
+	rl, err := NewWithConfig(Config{
+		Quotas: map[string]ModelQuota{
+			"model-a": {MaxRPM: 10},
+			"model-b": {MaxRPM: 20},
+			"model-c": {MaxRPM: 30},
+		},
+	})
+	require.NoError(t, err)
+
+	t.Run("Iter breaks early", func(t *testing.T) {
+		var count int
+		for range rl.Iter() {
+			count++
+			if count == 1 {
+				break
+			}
+		}
+		assert.Equal(t, 1, count, "should stop after first iteration")
+	})
+
+	t.Run("Models early break via manual iteration", func(t *testing.T) {
+		var count int
+		for range rl.Models() {
+			count++
+			if count == 2 {
+				break
+			}
+		}
+		assert.Equal(t, 2, count, "should stop after two models")
+	})
+}
+
 func TestCountTokensFull(t *testing.T) {
 	t.Run("invalid URL/network error", func(t *testing.T) {
 		// Using an invalid character in model name to trigger URL error or similar
