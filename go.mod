@@ -6,7 +6,7 @@ require (
 	forge.lthn.ai/core/go-io v0.1.5
 	forge.lthn.ai/core/go-log v0.0.4
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.46.2
+	modernc.org/sqlite v1.47.0
 )
 
 require (
