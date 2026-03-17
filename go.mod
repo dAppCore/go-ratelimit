@@ -3,7 +3,7 @@ module forge.lthn.ai/core/go-ratelimit
 go 1.26.0
 
 require (
-	forge.lthn.ai/core/go-io v0.1.5
+	forge.lthn.ai/core/go-io v0.1.7
 	forge.lthn.ai/core/go-log v0.0.4
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.47.0
