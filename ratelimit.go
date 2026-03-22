@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	coreerr "forge.lthn.ai/core/go-log"
-	coreio "forge.lthn.ai/core/go-io"
+	coreio "dappco.re/go/core/io"
+	coreerr "dappco.re/go/core/log"
 	"gopkg.in/yaml.v3"
 )
 

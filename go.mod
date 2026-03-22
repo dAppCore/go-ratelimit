@@ -3,13 +3,14 @@ module forge.lthn.ai/core/go-ratelimit
 go 1.26.0
 
 require (
-	forge.lthn.ai/core/go-io v0.1.5
-	forge.lthn.ai/core/go-log v0.0.4
+	dappco.re/go/core/io v0.2.0
+	dappco.re/go/core/log v0.1.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.46.2
+	modernc.org/sqlite v1.47.0
 )
 
 require (
+	forge.lthn.ai/core/go-log v0.0.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
