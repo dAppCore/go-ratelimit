@@ -28,7 +28,7 @@ Pre-commit gate: `go test -race ./...` and `go vet ./...` must both pass.
 - **Conventional commits**: `type(scope): description` — scopes: `ratelimit`, `sqlite`, `persist`, `config`
 - **Co-Author line** on every commit: `Co-Authored-By: Virgil <virgil@lethean.io>`
 - **Coverage** must not drop below 95%
-- **Error format**: `fmt.Errorf("ratelimit.FunctionName: what: %w", err)` — lowercase, no trailing punctuation
+- **Error format**: `coreerr.E("ratelimit.FunctionName", "what", err)` via `go-log` — lowercase, no trailing punctuation
 - **No `init()` functions**, no global mutable state
 - **Mutex discipline**: lock at the top of public methods, never inside helpers. Helpers that need the lock document "Caller must hold the lock". `prune()` mutates state, so even "read-only" methods that call it take the write lock. Never call a public method from another public method while holding the lock.
 
@@ -60,8 +60,10 @@ SQLite tests use `_Good`/`_Bad`/`_Ugly` suffixes (happy path / expected errors /
 
 ## Dependencies
 
-Only three direct dependencies — do not add more without justification:
+Five direct dependencies — do not add more without justification:
 
+- `forge.lthn.ai/core/go-io` — file I/O abstraction
+- `forge.lthn.ai/core/go-log` — structured error handling (`coreerr.E`)
 - `gopkg.in/yaml.v3` — YAML backend
 - `modernc.org/sqlite` — pure Go SQLite (no CGO)
 - `github.com/stretchr/testify` — test-only
