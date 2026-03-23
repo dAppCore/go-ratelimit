@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	coreerr "forge.lthn.ai/core/go-log"
+	coreerr "dappco.re/go/core/log"
 	_ "modernc.org/sqlite"
 )
 
@@ -78,7 +78,7 @@ func createSchema(db *sql.DB) error {
 	return nil
 }
 
-// saveQuotas upserts all quotas into the quotas table.
+// saveQuotas writes a complete quota snapshot to the quotas table.
 func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -86,24 +86,15 @@ func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT INTO quotas (model, max_rpm, max_tpm, max_rpd)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(model) DO UPDATE SET
-			max_rpm = excluded.max_rpm,
-			max_tpm = excluded.max_tpm,
-			max_rpd = excluded.max_rpd`)
-	if err != nil {
-		return coreerr.E("ratelimit.saveQuotas", "prepare", err)
-	}
-	defer stmt.Close()
-
-	for model, q := range quotas {
-		if _, err := stmt.Exec(model, q.MaxRPM, q.MaxTPM, q.MaxRPD); err != nil {
-			return coreerr.E("ratelimit.saveQuotas", fmt.Sprintf("exec %s", model), err)
-		}
+	if _, err := tx.Exec("DELETE FROM quotas"); err != nil {
+		return coreerr.E("ratelimit.saveQuotas", "clear", err)
 	}
 
-	return tx.Commit()
+	if err := insertQuotas(tx, quotas); err != nil {
+		return err
+	}
+
+	return commitTx(tx, "ratelimit.saveQuotas")
 }
 
 // loadQuotas reads all rows from the quotas table.
@@ -129,6 +120,28 @@ func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) {
 	return result, nil
 }
 
+// saveSnapshot writes quotas and state as a single atomic snapshot.
+func (s *sqliteStore) saveSnapshot(quotas map[string]ModelQuota, state map[string]*UsageStats) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return coreerr.E("ratelimit.saveSnapshot", "begin", err)
+	}
+	defer tx.Rollback()
+
+	if err := clearSnapshotTables(tx, true); err != nil {
+		return err
+	}
+
+	if err := insertQuotas(tx, quotas); err != nil {
+		return err
+	}
+	if err := insertState(tx, state); err != nil {
+		return err
+	}
+
+	return commitTx(tx, "ratelimit.saveSnapshot")
+}
+
 // saveState writes all usage state to SQLite in a single transaction.
 // It uses a truncate-and-insert approach for simplicity in this version,
 // but ensures atomicity via a single transaction.
@@ -139,7 +152,23 @@ func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 	}
 	defer tx.Rollback()
 
-	// Clear existing state in the transaction.
+	if err := clearSnapshotTables(tx, false); err != nil {
+		return err
+	}
+
+	if err := insertState(tx, state); err != nil {
+		return err
+	}
+
+	return commitTx(tx, "ratelimit.saveState")
+}
+
+func clearSnapshotTables(tx *sql.Tx, includeQuotas bool) error {
+	if includeQuotas {
+		if _, err := tx.Exec("DELETE FROM quotas"); err != nil {
+			return coreerr.E("ratelimit.saveSnapshot", "clear quotas", err)
+		}
+	}
 	if _, err := tx.Exec("DELETE FROM requests"); err != nil {
 		return coreerr.E("ratelimit.saveState", "clear requests", err)
 	}
@@ -149,7 +178,25 @@ func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 	if _, err := tx.Exec("DELETE FROM daily"); err != nil {
 		return coreerr.E("ratelimit.saveState", "clear daily", err)
 	}
+	return nil
+}
 
+func insertQuotas(tx *sql.Tx, quotas map[string]ModelQuota) error {
+	stmt, err := tx.Prepare("INSERT INTO quotas (model, max_rpm, max_tpm, max_rpd) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		return coreerr.E("ratelimit.saveQuotas", "prepare", err)
+	}
+	defer stmt.Close()
+
+	for model, q := range quotas {
+		if _, err := stmt.Exec(model, q.MaxRPM, q.MaxTPM, q.MaxRPD); err != nil {
+			return coreerr.E("ratelimit.saveQuotas", fmt.Sprintf("exec %s", model), err)
+		}
+	}
+	return nil
+}
+
+func insertState(tx *sql.Tx, state map[string]*UsageStats) error {
 	reqStmt, err := tx.Prepare("INSERT INTO requests (model, ts) VALUES (?, ?)")
 	if err != nil {
 		return coreerr.E("ratelimit.saveState", "prepare requests", err)
@@ -169,6 +216,9 @@ func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 	defer dayStmt.Close()
 
 	for model, stats := range state {
+		if stats == nil {
+			continue
+		}
 		for _, t := range stats.Requests {
 			if _, err := reqStmt.Exec(model, t.UnixNano()); err != nil {
 				return coreerr.E("ratelimit.saveState", fmt.Sprintf("insert request %s", model), err)
@@ -183,9 +233,12 @@ func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 			return coreerr.E("ratelimit.saveState", fmt.Sprintf("insert daily %s", model), err)
 		}
 	}
+	return nil
+}
 
+func commitTx(tx *sql.Tx, scope string) error {
 	if err := tx.Commit(); err != nil {
-		return coreerr.E("ratelimit.saveState", "commit", err)
+		return coreerr.E(scope, "commit", err)
 	}
 	return nil
 }

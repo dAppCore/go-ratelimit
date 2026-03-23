@@ -9,14 +9,16 @@ import (
 	"iter"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
-	coreerr "forge.lthn.ai/core/go-log"
-	coreio "forge.lthn.ai/core/go-io"
+	coreio "dappco.re/go/core/io"
+	coreerr "dappco.re/go/core/log"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,6 +34,16 @@ const (
 	ProviderAnthropic Provider = "anthropic"
 	// ProviderLocal is for local inference (Ollama, MLX, llama.cpp).
 	ProviderLocal Provider = "local"
+)
+
+const (
+	defaultStateDirName         = ".core"
+	defaultYAMLStateFile        = "ratelimits.yaml"
+	defaultSQLiteStateFile      = "ratelimits.db"
+	backendYAML                 = "yaml"
+	backendSQLite               = "sqlite"
+	countTokensErrorBodyLimit   = 8 * 1024
+	countTokensSuccessBodyLimit = 1 * 1024 * 1024
 )
 
 // ModelQuota defines the rate limits for a specific model.
@@ -143,39 +155,30 @@ func New() (*RateLimiter, error) {
 // NewWithConfig creates a RateLimiter from explicit configuration.
 // If no providers or quotas are specified, Gemini defaults are used.
 func NewWithConfig(cfg Config) (*RateLimiter, error) {
+	backend, err := normaliseBackend(cfg.Backend)
+	if err != nil {
+		return nil, err
+	}
+
 	filePath := cfg.FilePath
 	if filePath == "" {
-		home, err := os.UserHomeDir()
+		filePath, err = defaultStatePath(backend)
 		if err != nil {
 			return nil, err
 		}
-		filePath = filepath.Join(home, ".core", "ratelimits.yaml")
 	}
 
-	rl := &RateLimiter{
-		Quotas:   make(map[string]ModelQuota),
-		State:    make(map[string]*UsageStats),
-		filePath: filePath,
-	}
-
-	// Load provider profiles
-	profiles := DefaultProfiles()
-	providers := cfg.Providers
-
-	// If nothing specified at all, default to Gemini
-	if len(providers) == 0 && len(cfg.Quotas) == 0 {
-		providers = []Provider{ProviderGemini}
-	}
-
-	for _, p := range providers {
-		if profile, ok := profiles[p]; ok {
-			maps.Copy(rl.Quotas, profile.Models)
+	if backend == backendSQLite {
+		if cfg.FilePath == "" {
+			if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+				return nil, coreerr.E("ratelimit.NewWithConfig", "mkdir", err)
+			}
 		}
+		return NewWithSQLiteConfig(filePath, cfg)
 	}
 
-	// Merge explicit quotas on top (allows overrides)
-	maps.Copy(rl.Quotas, cfg.Quotas)
-
+	rl := newConfiguredRateLimiter(cfg)
+	rl.filePath = filePath
 	return rl, nil
 }
 
@@ -225,15 +228,17 @@ func (rl *RateLimiter) loadSQLite() error {
 	if err != nil {
 		return err
 	}
-	// Merge loaded quotas (loaded quotas override in-memory defaults).
-	maps.Copy(rl.Quotas, quotas)
+	// Persisted quotas are authoritative when present; otherwise keep config defaults.
+	if len(quotas) > 0 {
+		rl.Quotas = maps.Clone(quotas)
+	}
 
 	state, err := rl.sqlite.loadState()
 	if err != nil {
 		return err
 	}
-	// Replace in-memory state with persisted state.
-	maps.Copy(rl.State, state)
+	// Replace in-memory state with the persisted snapshot.
+	rl.State = state
 	return nil
 }
 
@@ -244,6 +249,9 @@ func (rl *RateLimiter) Persist() error {
 	quotas := maps.Clone(rl.Quotas)
 	state := make(map[string]*UsageStats, len(rl.State))
 	for k, v := range rl.State {
+		if v == nil {
+			continue
+		}
 		state[k] = &UsageStats{
 			Requests: slices.Clone(v.Requests),
 			Tokens:   slices.Clone(v.Tokens),
@@ -256,11 +264,8 @@ func (rl *RateLimiter) Persist() error {
 	rl.mu.Unlock()
 
 	if sqlite != nil {
-		if err := sqlite.saveQuotas(quotas); err != nil {
-			return coreerr.E("ratelimit.Persist", "sqlite quotas", err)
-		}
-		if err := sqlite.saveState(state); err != nil {
-			return coreerr.E("ratelimit.Persist", "sqlite state", err)
+		if err := sqlite.saveSnapshot(quotas, state); err != nil {
+			return coreerr.E("ratelimit.Persist", "sqlite snapshot", err)
 		}
 		return nil
 	}
@@ -290,6 +295,10 @@ func (rl *RateLimiter) Persist() error {
 func (rl *RateLimiter) prune(model string) {
 	stats, ok := rl.State[model]
 	if !ok {
+		return
+	}
+	if stats == nil {
+		delete(rl.State, model)
 		return
 	}
 
@@ -326,6 +335,10 @@ func (rl *RateLimiter) prune(model string) {
 // BackgroundPrune starts a goroutine that periodically prunes all model states.
 // It returns a function to stop the pruner.
 func (rl *RateLimiter) BackgroundPrune(interval time.Duration) func() {
+	if interval <= 0 {
+		return func() {}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -348,6 +361,10 @@ func (rl *RateLimiter) BackgroundPrune(interval time.Duration) func() {
 
 // CanSend checks if a request can be sent without violating limits.
 func (rl *RateLimiter) CanSend(model string, estimatedTokens int) bool {
+	if estimatedTokens < 0 {
+		return false
+	}
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -380,11 +397,8 @@ func (rl *RateLimiter) CanSend(model string, estimatedTokens int) bool {
 
 	// Check TPM
 	if quota.MaxTPM > 0 {
-		currentTokens := 0
-		for _, t := range stats.Tokens {
-			currentTokens += t.Count
-		}
-		if currentTokens+estimatedTokens > quota.MaxTPM {
+		currentTokens := totalTokenCount(stats.Tokens)
+		if estimatedTokens > quota.MaxTPM || currentTokens > quota.MaxTPM-estimatedTokens {
 			return false
 		}
 	}
@@ -405,13 +419,18 @@ func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int)
 	}
 
 	now := time.Now()
+	totalTokens := safeTokenSum(promptTokens, outputTokens)
 	stats.Requests = append(stats.Requests, now)
-	stats.Tokens = append(stats.Tokens, TokenEntry{Time: now, Count: promptTokens + outputTokens})
+	stats.Tokens = append(stats.Tokens, TokenEntry{Time: now, Count: totalTokens})
 	stats.DayCount++
 }
 
 // WaitForCapacity blocks until capacity is available or context is cancelled.
 func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error {
+	if tokens < 0 {
+		return coreerr.E("ratelimit.WaitForCapacity", "negative tokens", nil)
+	}
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -522,24 +541,8 @@ func (rl *RateLimiter) AllStats() map[string]ModelStats {
 		result[m] = ModelStats{}
 	}
 
-	now := time.Now()
-	window := now.Add(-1 * time.Minute)
-
 	for m := range result {
-		// Prune inline
-		if s, ok := rl.State[m]; ok {
-			s.Requests = slices.DeleteFunc(s.Requests, func(t time.Time) bool {
-				return !t.After(window)
-			})
-			s.Tokens = slices.DeleteFunc(s.Tokens, func(t TokenEntry) bool {
-				return !t.Time.After(window)
-			})
-
-			if now.Sub(s.DayStart) >= 24*time.Hour {
-				s.DayStart = now
-				s.DayCount = 0
-			}
-		}
+		rl.prune(m)
 
 		ms := ModelStats{}
 		if q, ok := rl.Quotas[m]; ok {
@@ -547,13 +550,11 @@ func (rl *RateLimiter) AllStats() map[string]ModelStats {
 			ms.MaxTPM = q.MaxTPM
 			ms.MaxRPD = q.MaxRPD
 		}
-		if s, ok := rl.State[m]; ok {
+		if s, ok := rl.State[m]; ok && s != nil {
 			ms.RPM = len(s.Requests)
 			ms.RPD = s.DayCount
 			ms.DayStart = s.DayStart
-			for _, t := range s.Tokens {
-				ms.TPM += t.Count
-			}
+			ms.TPM = totalTokenCount(s.Tokens)
 		}
 		result[m] = ms
 	}
@@ -579,25 +580,8 @@ func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) {
 		return nil, err
 	}
 
-	rl := &RateLimiter{
-		Quotas: make(map[string]ModelQuota),
-		State:  make(map[string]*UsageStats),
-		sqlite: store,
-	}
-
-	// Load provider profiles.
-	profiles := DefaultProfiles()
-	providers := cfg.Providers
-	if len(providers) == 0 && len(cfg.Quotas) == 0 {
-		providers = []Provider{ProviderGemini}
-	}
-	for _, p := range providers {
-		if profile, ok := profiles[p]; ok {
-			maps.Copy(rl.Quotas, profile.Models)
-		}
-	}
-	maps.Copy(rl.Quotas, cfg.Quotas)
-
+	rl := newConfiguredRateLimiter(cfg)
+	rl.sqlite = store
 	return rl, nil
 }
 
@@ -633,22 +617,22 @@ func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
 	}
 	defer store.close()
 
-	if rl.Quotas != nil {
-		if err := store.saveQuotas(rl.Quotas); err != nil {
-			return err
-		}
-	}
-	if rl.State != nil {
-		if err := store.saveState(rl.State); err != nil {
-			return err
-		}
+	if err := store.saveSnapshot(rl.Quotas, rl.State); err != nil {
+		return err
 	}
 	return nil
 }
 
 // CountTokens calls the Google API to count tokens for a prompt.
 func CountTokens(ctx context.Context, apiKey, model, text string) (int, error) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:countTokens", model)
+	return countTokensWithClient(ctx, http.DefaultClient, "https://generativelanguage.googleapis.com", apiKey, model, text)
+}
+
+func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, apiKey, model, text string) (int, error) {
+	requestURL, err := countTokensURL(baseURL, model)
+	if err != nil {
+		return 0, coreerr.E("ratelimit.CountTokens", "build url", err)
+	}
 
 	reqBody := map[string]any{
 		"contents": []any{
@@ -665,30 +649,147 @@ func CountTokens(ctx context.Context, apiKey, model, text string) (int, error) {
 		return 0, coreerr.E("ratelimit.CountTokens", "marshal request", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return 0, coreerr.E("ratelimit.CountTokens", "new request", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, coreerr.E("ratelimit.CountTokens", "do request", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, coreerr.E("ratelimit.CountTokens", fmt.Sprintf("API error (status %d): %s", resp.StatusCode, string(body)), nil)
+		body, err := readLimitedBody(resp.Body, countTokensErrorBodyLimit)
+		if err != nil {
+			return 0, coreerr.E("ratelimit.CountTokens", "read error body", err)
+		}
+		return 0, coreerr.E("ratelimit.CountTokens", fmt.Sprintf("api error status %d: %s", resp.StatusCode, body), nil)
 	}
 
 	var result struct {
 		TotalTokens int `json:"totalTokens"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, countTokensSuccessBodyLimit)).Decode(&result); err != nil {
 		return 0, coreerr.E("ratelimit.CountTokens", "decode response", err)
 	}
 
 	return result.TotalTokens, nil
+}
+
+func newConfiguredRateLimiter(cfg Config) *RateLimiter {
+	rl := &RateLimiter{
+		Quotas: make(map[string]ModelQuota),
+		State:  make(map[string]*UsageStats),
+	}
+	applyConfig(rl, cfg)
+	return rl
+}
+
+func applyConfig(rl *RateLimiter, cfg Config) {
+	profiles := DefaultProfiles()
+	providers := cfg.Providers
+
+	if len(providers) == 0 && len(cfg.Quotas) == 0 {
+		providers = []Provider{ProviderGemini}
+	}
+
+	for _, p := range providers {
+		if profile, ok := profiles[p]; ok {
+			maps.Copy(rl.Quotas, profile.Models)
+		}
+	}
+
+	maps.Copy(rl.Quotas, cfg.Quotas)
+}
+
+func normaliseBackend(backend string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "", backendYAML:
+		return backendYAML, nil
+	case backendSQLite:
+		return backendSQLite, nil
+	default:
+		return "", coreerr.E("ratelimit.NewWithConfig", fmt.Sprintf("unknown backend %q", backend), nil)
+	}
+}
+
+func defaultStatePath(backend string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	fileName := defaultYAMLStateFile
+	if backend == backendSQLite {
+		fileName = defaultSQLiteStateFile
+	}
+
+	return filepath.Join(home, defaultStateDirName, fileName), nil
+}
+
+func safeTokenSum(a, b int) int {
+	return safeTokenTotal([]TokenEntry{{Count: a}, {Count: b}})
+}
+
+func totalTokenCount(tokens []TokenEntry) int {
+	return safeTokenTotal(tokens)
+}
+
+func safeTokenTotal(tokens []TokenEntry) int {
+	const maxInt = int(^uint(0) >> 1)
+
+	total := 0
+	for _, token := range tokens {
+		count := token.Count
+		if count < 0 {
+			continue
+		}
+		if total > maxInt-count {
+			return maxInt
+		}
+		total += count
+	}
+	return total
+}
+
+func countTokensURL(baseURL, model string) (string, error) {
+	if strings.TrimSpace(model) == "" {
+		return "", fmt.Errorf("empty model")
+	}
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid base url")
+	}
+
+	return strings.TrimRight(parsed.String(), "/") + "/v1beta/models/" + url.PathEscape(model) + ":countTokens", nil
+}
+
+func readLimitedBody(r io.Reader, limit int64) (string, error) {
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return "", err
+	}
+
+	truncated := int64(len(body)) > limit
+	if truncated {
+		body = body[:limit]
+	}
+
+	result := string(body)
+	if truncated {
+		result += "..."
+	}
+	return result, nil
 }

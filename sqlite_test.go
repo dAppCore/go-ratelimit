@@ -435,6 +435,45 @@ func TestConfigBackendDefault_Good(t *testing.T) {
 	assert.Nil(t, rl.sqlite, "empty backend should use YAML (no sqlite)")
 }
 
+func TestConfigBackendSQLite_Good(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "config-backend.db")
+	rl, err := NewWithConfig(Config{
+		Backend:  backendSQLite,
+		FilePath: dbPath,
+		Quotas: map[string]ModelQuota{
+			"backend-model": {MaxRPM: 10, MaxTPM: 1000, MaxRPD: 50},
+		},
+	})
+	require.NoError(t, err)
+	defer rl.Close()
+
+	require.NotNil(t, rl.sqlite)
+	rl.RecordUsage("backend-model", 10, 10)
+	require.NoError(t, rl.Persist())
+
+	_, statErr := os.Stat(dbPath)
+	assert.NoError(t, statErr, "sqlite backend should persist to the configured DB path")
+}
+
+func TestConfigBackendSQLiteDefaultPath_Good(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("home", "")
+
+	rl, err := NewWithConfig(Config{
+		Backend: backendSQLite,
+	})
+	require.NoError(t, err)
+	defer rl.Close()
+
+	require.NotNil(t, rl.sqlite)
+	require.NoError(t, rl.Persist())
+
+	_, statErr := os.Stat(filepath.Join(home, defaultStateDirName, defaultSQLiteStateFile))
+	assert.NoError(t, statErr, "sqlite backend should use the default home DB path")
+}
+
 // --- Phase 2: MigrateYAMLToSQLite ---
 
 func TestMigrateYAMLToSQLite_Good(t *testing.T) {
@@ -490,6 +529,69 @@ func TestMigrateYAMLToSQLite_Bad(t *testing.T) {
 		err := MigrateYAMLToSQLite(yamlPath, filepath.Join(tmpDir, "out.db"))
 		assert.Error(t, err, "should fail with corrupt YAML")
 	})
+}
+
+func TestMigrateYAMLToSQLiteAtomic_Good(t *testing.T) {
+	tmpDir := t.TempDir()
+	yamlPath := filepath.Join(tmpDir, "atomic.yaml")
+	sqlitePath := filepath.Join(tmpDir, "atomic.db")
+	now := time.Now().UTC()
+
+	store, err := newSQLiteStore(sqlitePath)
+	require.NoError(t, err)
+
+	originalQuotas := map[string]ModelQuota{
+		"old-model": {MaxRPM: 1, MaxTPM: 2, MaxRPD: 3},
+	}
+	originalState := map[string]*UsageStats{
+		"old-model": {
+			Requests: []time.Time{now},
+			Tokens:   []TokenEntry{{Time: now, Count: 9}},
+			DayStart: now,
+			DayCount: 1,
+		},
+	}
+	require.NoError(t, store.saveSnapshot(originalQuotas, originalState))
+
+	_, err = store.db.Exec(`CREATE TRIGGER fail_daily_migrate BEFORE INSERT ON daily
+		BEGIN SELECT RAISE(ABORT, 'forced daily failure'); END`)
+	require.NoError(t, err)
+	require.NoError(t, store.close())
+
+	migrated := &RateLimiter{
+		Quotas: map[string]ModelQuota{
+			"new-model": {MaxRPM: 10, MaxTPM: 20, MaxRPD: 30},
+		},
+		State: map[string]*UsageStats{
+			"new-model": {
+				Requests: []time.Time{now.Add(5 * time.Second)},
+				Tokens:   []TokenEntry{{Time: now.Add(5 * time.Second), Count: 99}},
+				DayStart: now.Add(5 * time.Second),
+				DayCount: 2,
+			},
+		},
+	}
+	data, err := yaml.Marshal(migrated)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(yamlPath, data, 0o644))
+
+	err = MigrateYAMLToSQLite(yamlPath, sqlitePath)
+	require.Error(t, err)
+
+	store, err = newSQLiteStore(sqlitePath)
+	require.NoError(t, err)
+	defer store.close()
+
+	quotas, err := store.loadQuotas()
+	require.NoError(t, err)
+	assert.Equal(t, originalQuotas, quotas)
+
+	state, err := store.loadState()
+	require.NoError(t, err)
+	require.Contains(t, state, "old-model")
+	assert.Equal(t, originalState["old-model"].DayCount, state["old-model"].DayCount)
+	assert.Equal(t, originalState["old-model"].Tokens[0].Count, state["old-model"].Tokens[0].Count)
+	assert.NotContains(t, state, "new-model")
 }
 
 func TestMigrateYAMLToSQLitePreservesAllGeminiModels_Good(t *testing.T) {
@@ -648,6 +750,78 @@ func TestSQLiteEndToEnd_Good(t *testing.T) {
 	assert.Equal(t, 1, custom.RPM)
 	assert.Equal(t, 200, custom.TPM)
 	assert.Equal(t, 5, custom.MaxRPM)
+}
+
+func TestSQLiteLoadReplacesPersistedSnapshot_Good(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "replace.db")
+	rl, err := NewWithSQLiteConfig(dbPath, Config{
+		Quotas: map[string]ModelQuota{
+			"model-a": {MaxRPM: 1, MaxTPM: 100, MaxRPD: 10},
+		},
+	})
+	require.NoError(t, err)
+
+	rl.RecordUsage("model-a", 10, 10)
+	require.NoError(t, rl.Persist())
+
+	delete(rl.Quotas, "model-a")
+	rl.Quotas["model-b"] = ModelQuota{MaxRPM: 2, MaxTPM: 200, MaxRPD: 20}
+	rl.Reset("")
+	rl.RecordUsage("model-b", 5, 5)
+	require.NoError(t, rl.Persist())
+	require.NoError(t, rl.Close())
+
+	rl2, err := NewWithSQLiteConfig(dbPath, Config{
+		Providers: []Provider{ProviderGemini},
+	})
+	require.NoError(t, err)
+	defer rl2.Close()
+
+	rl2.State["stale-memory"] = &UsageStats{DayStart: time.Now(), DayCount: 99}
+	require.NoError(t, rl2.Load())
+
+	assert.NotContains(t, rl2.Quotas, "gemini-3-pro-preview")
+	assert.NotContains(t, rl2.Quotas, "model-a")
+	assert.Contains(t, rl2.Quotas, "model-b")
+	assert.NotContains(t, rl2.State, "stale-memory")
+	assert.NotContains(t, rl2.State, "model-a")
+	assert.Equal(t, 1, rl2.Stats("model-b").RPD)
+}
+
+func TestSQLitePersistAtomic_Good(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "persist-atomic.db")
+	rl, err := NewWithSQLiteConfig(dbPath, Config{
+		Quotas: map[string]ModelQuota{
+			"old-model": {MaxRPM: 1, MaxTPM: 100, MaxRPD: 10},
+		},
+	})
+	require.NoError(t, err)
+
+	rl.RecordUsage("old-model", 10, 10)
+	require.NoError(t, rl.Persist())
+
+	_, err = rl.sqlite.db.Exec(`CREATE TRIGGER fail_daily_persist BEFORE INSERT ON daily
+		BEGIN SELECT RAISE(ABORT, 'forced daily failure'); END`)
+	require.NoError(t, err)
+
+	delete(rl.Quotas, "old-model")
+	rl.Quotas["new-model"] = ModelQuota{MaxRPM: 2, MaxTPM: 200, MaxRPD: 20}
+	rl.Reset("")
+	rl.RecordUsage("new-model", 50, 50)
+
+	err = rl.Persist()
+	require.Error(t, err)
+	require.NoError(t, rl.Close())
+
+	rl2, err := NewWithSQLiteConfig(dbPath, Config{})
+	require.NoError(t, err)
+	defer rl2.Close()
+	require.NoError(t, rl2.Load())
+
+	assert.Contains(t, rl2.Quotas, "old-model")
+	assert.NotContains(t, rl2.Quotas, "new-model")
+	assert.Equal(t, 1, rl2.Stats("old-model").RPD)
+	assert.Equal(t, 0, rl2.Stats("new-model").RPD)
 }
 
 // --- Phase 2: Benchmark ---

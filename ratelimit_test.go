@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +25,18 @@ func newTestLimiter(t *testing.T) *RateLimiter {
 	require.NoError(t, err)
 	rl.filePath = filepath.Join(t.TempDir(), "ratelimits.yaml")
 	return rl
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
 }
 
 // --- Phase 0: CanSend boundary conditions ---
@@ -161,6 +175,15 @@ func TestCanSend(t *testing.T) {
 
 		rl.RecordUsage(model, 50, 50) // exactly 100 tokens
 		assert.True(t, rl.CanSend(model, 0), "zero estimated tokens should fit even at limit")
+	})
+
+	t.Run("negative estimated tokens are rejected", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "negative-est"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 100, MaxRPD: 100}
+		rl.RecordUsage(model, 50, 50)
+
+		assert.False(t, rl.CanSend(model, -1), "negative estimated tokens should not bypass TPM limits")
 	})
 }
 
@@ -335,6 +358,19 @@ func TestRecordUsage(t *testing.T) {
 		assert.Len(t, stats.Tokens, 2)
 		assert.Equal(t, 6, stats.DayCount)
 	})
+
+	t.Run("negative token inputs are clamped to zero", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "record-negative"
+
+		rl.RecordUsage(model, -100, 25)
+
+		stats := rl.State[model]
+		require.NotNil(t, stats)
+		assert.Len(t, stats.Requests, 1)
+		assert.Len(t, stats.Tokens, 1)
+		assert.Equal(t, 25, stats.Tokens[0].Count)
+	})
 }
 
 // --- Phase 0: Reset ---
@@ -421,6 +457,58 @@ func TestWaitForCapacity(t *testing.T) {
 
 		err := rl.WaitForCapacity(ctx, model, 10)
 		assert.Error(t, err, "should return error for already-cancelled context")
+	})
+
+	t.Run("negative tokens return error", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		err := rl.WaitForCapacity(context.Background(), "wait-negative", -1)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "negative tokens")
+	})
+}
+
+func TestNilUsageStats(t *testing.T) {
+	t.Run("CanSend replaces nil state without panicking", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "nil-cansend"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+		rl.State[model] = nil
+
+		assert.NotPanics(t, func() {
+			assert.True(t, rl.CanSend(model, 10))
+		})
+		assert.NotNil(t, rl.State[model])
+	})
+
+	t.Run("RecordUsage replaces nil state without panicking", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "nil-record"
+		rl.State[model] = nil
+
+		assert.NotPanics(t, func() {
+			rl.RecordUsage(model, 10, 10)
+		})
+		require.NotNil(t, rl.State[model])
+		assert.Equal(t, 1, rl.State[model].DayCount)
+	})
+
+	t.Run("Stats and AllStats tolerate nil state entries", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		rl.Quotas["nil-stats"] = ModelQuota{MaxRPM: 1, MaxTPM: 2, MaxRPD: 3}
+		rl.State["nil-stats"] = nil
+		rl.State["nil-all-stats"] = nil
+
+		assert.NotPanics(t, func() {
+			stats := rl.Stats("nil-stats")
+			assert.Equal(t, 1, stats.MaxRPM)
+			assert.Equal(t, 0, stats.TPM)
+		})
+
+		assert.NotPanics(t, func() {
+			all := rl.AllStats()
+			assert.Contains(t, all, "nil-stats")
+			assert.Contains(t, all, "nil-all-stats")
+		})
 	})
 }
 
@@ -738,6 +826,19 @@ func TestBackgroundPrune(t *testing.T) {
 		_, exists := rl.State[model]
 		return !exists
 	}, 1*time.Second, 20*time.Millisecond, "old empty state should be pruned")
+
+	t.Run("non-positive interval is a safe no-op", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		rl.State["still-here"] = &UsageStats{
+			Requests: []time.Time{time.Now().Add(-2 * time.Minute)},
+		}
+
+		assert.NotPanics(t, func() {
+			stop := rl.BackgroundPrune(0)
+			stop()
+		})
+		assert.Contains(t, rl.State, "still-here")
+	})
 }
 
 // --- Phase 0: CountTokens (with mock HTTP server) ---
@@ -748,26 +849,149 @@ func TestCountTokens(t *testing.T) {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 			assert.Equal(t, "test-api-key", r.Header.Get("x-goog-api-key"))
+			assert.Equal(t, "/v1beta/models/test-model:countTokens", r.URL.EscapedPath())
+
+			var body struct {
+				Contents []struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"contents"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			require.Len(t, body.Contents, 1)
+			require.Len(t, body.Contents[0].Parts, 1)
+			assert.Equal(t, "hello", body.Contents[0].Parts[0].Text)
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"totalTokens": 42})
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]int{"totalTokens": 42}))
 		}))
 		defer server.Close()
 
-		// For testing purposes, we would need to make the base URL configurable.
-		// Since we're just checking the signature and basic logic, we test the error paths.
+		tokens, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "test-api-key", "test-model", "hello")
+		require.NoError(t, err)
+		assert.Equal(t, 42, tokens)
 	})
 
-	t.Run("API error returns error", func(t *testing.T) {
+	t.Run("model name is path escaped", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/v1beta/models/folder%2Fmodel%3Fdebug=1:countTokens", r.URL.EscapedPath())
+			assert.Empty(t, r.URL.RawQuery)
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]int{"totalTokens": 7}))
+		}))
+		defer server.Close()
+
+		tokens, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "test-api-key", "folder/model?debug=1", "hello")
+		require.NoError(t, err)
+		assert.Equal(t, 7, tokens)
+	})
+
+	t.Run("API error body is truncated", func(t *testing.T) {
+		largeBody := strings.Repeat("x", countTokensErrorBodyLimit+256)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error": "invalid API key"}`)
+			_, err := fmt.Fprint(w, largeBody)
+			require.NoError(t, err)
 		}))
 		defer server.Close()
 
-		_, err := CountTokens(context.Background(), "fake-key", "test-model", "hello")
-		assert.Error(t, err, "should fail with invalid API endpoint")
+		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "api error status 401")
+		assert.True(t, strings.Count(err.Error(), "x") < len(largeBody), "error body should be bounded")
+		assert.Contains(t, err.Error(), "...")
 	})
+
+	t.Run("empty model is rejected before request", func(t *testing.T) {
+		_, err := CountTokens(context.Background(), "fake-key", "", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build url")
+	})
+
+	t.Run("invalid base URL returns error", func(t *testing.T) {
+		_, err := countTokensWithClient(context.Background(), http.DefaultClient, "://bad-url", "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build url")
+	})
+
+	t.Run("base URL without host returns error", func(t *testing.T) {
+		_, err := countTokensWithClient(context.Background(), http.DefaultClient, "/relative", "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build url")
+	})
+
+	t.Run("invalid JSON response returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := w.Write([]byte(`{"totalTokens":`))
+			require.NoError(t, err)
+		}))
+		defer server.Close()
+
+		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode response")
+	})
+
+	t.Run("error body read failures are returned", func(t *testing.T) {
+		client := &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusBadGateway,
+					Body:       io.NopCloser(errReader{}),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		}
+
+		_, err := countTokensWithClient(context.Background(), client, "https://generativelanguage.googleapis.com", "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "read error body")
+	})
+
+	t.Run("nil client falls back to http.DefaultClient", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]int{"totalTokens": 11}))
+		}))
+		defer server.Close()
+
+		originalClient := http.DefaultClient
+		http.DefaultClient = server.Client()
+		defer func() {
+			http.DefaultClient = originalClient
+		}()
+
+		tokens, err := countTokensWithClient(context.Background(), nil, server.URL, "fake-key", "test-model", "hello")
+		require.NoError(t, err)
+		assert.Equal(t, 11, tokens)
+	})
+}
+
+func TestPersistSkipsNilState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nil-state.yaml")
+
+	rl, err := New()
+	require.NoError(t, err)
+	rl.filePath = path
+	rl.State["nil-model"] = nil
+
+	require.NoError(t, rl.Persist())
+
+	rl2, err := New()
+	require.NoError(t, err)
+	rl2.filePath = path
+	require.NoError(t, rl2.Load())
+	assert.NotContains(t, rl2.State, "nil-model")
+}
+
+func TestTokenTotals(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+
+	assert.Equal(t, 25, safeTokenSum(-100, 25))
+	assert.Equal(t, maxInt, safeTokenSum(maxInt, 1))
+	assert.Equal(t, 10, totalTokenCount([]TokenEntry{{Count: -5}, {Count: 10}}))
 }
 
 // --- Phase 0: Benchmarks ---
@@ -982,6 +1206,25 @@ func TestNewWithConfig(t *testing.T) {
 		q := rl.Quotas["llama-3.3-70b"]
 		assert.Equal(t, 5, q.MaxRPM)
 		assert.Equal(t, 50000, q.MaxTPM)
+	})
+
+	t.Run("invalid backend returns error", func(t *testing.T) {
+		_, err := NewWithConfig(Config{
+			Backend: "bogus",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown backend")
+	})
+
+	t.Run("default YAML path uses home directory", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", "")
+		t.Setenv("home", "")
+
+		rl, err := NewWithConfig(Config{})
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(home, defaultStateDirName, defaultYAMLStateFile), rl.filePath)
 	})
 }
 
