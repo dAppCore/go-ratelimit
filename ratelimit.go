@@ -3,11 +3,11 @@ package ratelimit
 import (
 	"context"
 	"io"
+	"io/fs"
 	"iter"
 	"maps"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -17,6 +17,8 @@ import (
 )
 
 // Provider identifies an LLM provider for quota profiles.
+//
+//	provider := ProviderOpenAI
 type Provider string
 
 const (
@@ -41,6 +43,8 @@ const (
 )
 
 // ModelQuota defines the rate limits for a specific model.
+//
+//	quota := ModelQuota{MaxRPM: 60, MaxTPM: 90000, MaxRPD: 1000}
 type ModelQuota struct {
 	MaxRPM int `yaml:"max_rpm"` // Requests per minute (0 = unlimited)
 	MaxTPM int `yaml:"max_tpm"` // Tokens per minute (0 = unlimited)
@@ -48,12 +52,18 @@ type ModelQuota struct {
 }
 
 // ProviderProfile bundles model quotas for a provider.
+//
+//	profile := ProviderProfile{Provider: ProviderGemini, Models: DefaultProfiles()[ProviderGemini].Models}
 type ProviderProfile struct {
-	Provider Provider              `yaml:"provider"`
-	Models   map[string]ModelQuota `yaml:"models"`
+	// Provider identifies the provider that owns the profile.
+	Provider Provider `yaml:"provider"`
+	// Models maps model names to quotas.
+	Models map[string]ModelQuota `yaml:"models"`
 }
 
 // Config controls RateLimiter initialisation.
+//
+//	cfg := Config{Providers: []Provider{ProviderGemini}, FilePath: "/tmp/ratelimits.yaml"}
 type Config struct {
 	// FilePath overrides the default state file location.
 	// If empty, defaults to ~/.core/ratelimits.yaml.
@@ -73,23 +83,35 @@ type Config struct {
 }
 
 // TokenEntry records a token usage event.
+//
+//	entry := TokenEntry{Time: time.Now(), Count: 512}
 type TokenEntry struct {
 	Time  time.Time `yaml:"time"`
 	Count int       `yaml:"count"`
 }
 
 // UsageStats tracks usage history for a model.
+//
+//	stats := UsageStats{DayStart: time.Now(), DayCount: 1}
 type UsageStats struct {
 	Requests []time.Time  `yaml:"requests"` // Sliding window (1m)
 	Tokens   []TokenEntry `yaml:"tokens"`   // Sliding window (1m)
-	DayStart time.Time    `yaml:"day_start"`
-	DayCount int          `yaml:"day_count"`
+	// DayStart is the start of the rolling 24-hour window.
+	DayStart time.Time `yaml:"day_start"`
+	// DayCount is the number of requests recorded in the rolling 24-hour window.
+	DayCount int `yaml:"day_count"`
 }
 
 // RateLimiter manages rate limits across multiple models.
+//
+//	rl, err := New()
+//	if err != nil { /* handle error */ }
+//	defer rl.Close()
 type RateLimiter struct {
-	mu       sync.RWMutex
-	Quotas   map[string]ModelQuota  `yaml:"quotas"`
+	mu sync.RWMutex
+	// Quotas holds the configured per-model limits.
+	Quotas map[string]ModelQuota `yaml:"quotas"`
+	// State holds per-model usage windows.
 	State    map[string]*UsageStats `yaml:"state"`
 	filePath string
 	sqlite   *sqliteStore // non-nil when backend is "sqlite"
@@ -97,6 +119,9 @@ type RateLimiter struct {
 
 // DefaultProfiles returns pre-configured quota profiles for each provider.
 // Values are based on published rate limits as of Feb 2026.
+//
+//	profiles := DefaultProfiles()
+//	openAI := profiles[ProviderOpenAI]
 func DefaultProfiles() map[Provider]ProviderProfile {
 	return map[Provider]ProviderProfile{
 		ProviderGemini: {
@@ -140,6 +165,8 @@ func DefaultProfiles() map[Provider]ProviderProfile {
 
 // New creates a new RateLimiter with Gemini defaults.
 // This preserves backward compatibility -- existing callers are unaffected.
+//
+//	rl, err := New()
 func New() (*RateLimiter, error) {
 	return NewWithConfig(Config{
 		Providers: []Provider{ProviderGemini},
@@ -148,6 +175,8 @@ func New() (*RateLimiter, error) {
 
 // NewWithConfig creates a RateLimiter from explicit configuration.
 // If no providers or quotas are specified, Gemini defaults are used.
+//
+//	rl, err := NewWithConfig(Config{Providers: []Provider{ProviderAnthropic}})
 func NewWithConfig(cfg Config) (*RateLimiter, error) {
 	backend, err := normaliseBackend(cfg.Backend)
 	if err != nil {
@@ -177,6 +206,8 @@ func NewWithConfig(cfg Config) (*RateLimiter, error) {
 }
 
 // SetQuota sets or updates the quota for a specific model at runtime.
+//
+//	rl.SetQuota("gpt-4o-mini", ModelQuota{MaxRPM: 60, MaxTPM: 200000})
 func (rl *RateLimiter) SetQuota(model string, quota ModelQuota) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -185,6 +216,8 @@ func (rl *RateLimiter) SetQuota(model string, quota ModelQuota) {
 
 // AddProvider loads all default quotas for a provider.
 // Existing quotas for models in the profile are overwritten.
+//
+//	rl.AddProvider(ProviderOpenAI)
 func (rl *RateLimiter) AddProvider(provider Provider) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -196,6 +229,8 @@ func (rl *RateLimiter) AddProvider(provider Provider) {
 }
 
 // Load reads the state from disk (YAML) or database (SQLite).
+//
+//	if err := rl.Load(); err != nil { /* handle error */ }
 func (rl *RateLimiter) Load() error {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -205,7 +240,7 @@ func (rl *RateLimiter) Load() error {
 	}
 
 	content, err := readLocalFile(rl.filePath)
-	if os.IsNotExist(err) {
+	if core.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
@@ -238,6 +273,8 @@ func (rl *RateLimiter) loadSQLite() error {
 
 // Persist writes a snapshot of the state to disk (YAML) or database (SQLite).
 // It clones the state under a lock and performs I/O without blocking other callers.
+//
+//	if err := rl.Persist(); err != nil { /* handle error */ }
 func (rl *RateLimiter) Persist() error {
 	rl.mu.Lock()
 	quotas := maps.Clone(rl.Quotas)
@@ -328,6 +365,9 @@ func (rl *RateLimiter) prune(model string) {
 
 // BackgroundPrune starts a goroutine that periodically prunes all model states.
 // It returns a function to stop the pruner.
+//
+//	stop := rl.BackgroundPrune(30 * time.Second)
+//	defer stop()
 func (rl *RateLimiter) BackgroundPrune(interval time.Duration) func() {
 	if interval <= 0 {
 		return func() {}
@@ -354,6 +394,8 @@ func (rl *RateLimiter) BackgroundPrune(interval time.Duration) func() {
 }
 
 // CanSend checks if a request can be sent without violating limits.
+//
+//	ok := rl.CanSend("gemini-3-pro-preview", 1200)
 func (rl *RateLimiter) CanSend(model string, estimatedTokens int) bool {
 	if estimatedTokens < 0 {
 		return false
@@ -401,6 +443,8 @@ func (rl *RateLimiter) CanSend(model string, estimatedTokens int) bool {
 }
 
 // RecordUsage records a successful API call.
+//
+//	rl.RecordUsage("gemini-3-pro-preview", 900, 300)
 func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -420,6 +464,8 @@ func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int)
 }
 
 // WaitForCapacity blocks until capacity is available or context is cancelled.
+//
+//	err := rl.WaitForCapacity(ctx, "gemini-3-pro-preview", 1200)
 func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error {
 	if tokens < 0 {
 		return core.E("ratelimit.WaitForCapacity", "negative tokens", nil)
@@ -443,6 +489,8 @@ func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens
 }
 
 // Reset clears stats for a model (or all if model is empty).
+//
+//	rl.Reset("gemini-3-pro-preview")
 func (rl *RateLimiter) Reset(model string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -455,17 +503,28 @@ func (rl *RateLimiter) Reset(model string) {
 }
 
 // ModelStats represents a snapshot of usage.
+//
+//	stats := rl.Stats("gemini-3-pro-preview")
 type ModelStats struct {
-	RPM      int
-	MaxRPM   int
-	TPM      int
-	MaxTPM   int
-	RPD      int
-	MaxRPD   int
+	// RPM is the current requests-per-minute usage in the sliding window.
+	RPM int
+	// MaxRPM is the configured requests-per-minute limit.
+	MaxRPM int
+	// TPM is the current tokens-per-minute usage in the sliding window.
+	TPM int
+	// MaxTPM is the configured tokens-per-minute limit.
+	MaxTPM int
+	// RPD is the current requests-per-day usage in the rolling 24-hour window.
+	RPD int
+	// MaxRPD is the configured requests-per-day limit.
+	MaxRPD int
+	// DayStart is the start of the current rolling 24-hour window.
 	DayStart time.Time
 }
 
 // Models returns a sorted iterator over all model names tracked by the limiter.
+//
+//	for model := range rl.Models() { println(model) }
 func (rl *RateLimiter) Models() iter.Seq[string] {
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
@@ -482,6 +541,8 @@ func (rl *RateLimiter) Models() iter.Seq[string] {
 }
 
 // Iter returns a sorted iterator over all model names and their current stats.
+//
+//	for model, stats := range rl.Iter() { _ = stats; println(model) }
 func (rl *RateLimiter) Iter() iter.Seq2[string, ModelStats] {
 	return func(yield func(string, ModelStats) bool) {
 		stats := rl.AllStats()
@@ -494,6 +555,8 @@ func (rl *RateLimiter) Iter() iter.Seq2[string, ModelStats] {
 }
 
 // Stats returns current stats for a model.
+//
+//	stats := rl.Stats("gemini-3-pro-preview")
 func (rl *RateLimiter) Stats(model string) ModelStats {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -521,6 +584,8 @@ func (rl *RateLimiter) Stats(model string) ModelStats {
 }
 
 // AllStats returns stats for all tracked models.
+//
+//	all := rl.AllStats()
 func (rl *RateLimiter) AllStats() map[string]ModelStats {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -559,6 +624,8 @@ func (rl *RateLimiter) AllStats() map[string]ModelStats {
 // NewWithSQLite creates a SQLite-backed RateLimiter with Gemini defaults.
 // The database is created at dbPath if it does not exist. Use Close() to
 // release the database connection when finished.
+//
+//	rl, err := NewWithSQLite("/tmp/ratelimits.db")
 func NewWithSQLite(dbPath string) (*RateLimiter, error) {
 	return NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini},
@@ -568,6 +635,8 @@ func NewWithSQLite(dbPath string) (*RateLimiter, error) {
 // NewWithSQLiteConfig creates a SQLite-backed RateLimiter with custom config.
 // The Backend field in cfg is ignored (always "sqlite"). Use Close() to
 // release the database connection when finished.
+//
+//	rl, err := NewWithSQLiteConfig("/tmp/ratelimits.db", Config{Providers: []Provider{ProviderOpenAI}})
 func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) {
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -582,6 +651,8 @@ func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) {
 // Close releases resources held by the RateLimiter. For YAML-backed
 // limiters this is a no-op. For SQLite-backed limiters it closes the
 // database connection.
+//
+//	defer rl.Close()
 func (rl *RateLimiter) Close() error {
 	if rl.sqlite != nil {
 		return rl.sqlite.close()
@@ -592,6 +663,8 @@ func (rl *RateLimiter) Close() error {
 // MigrateYAMLToSQLite reads state from a YAML file and writes it to a new
 // SQLite database. Both quotas and usage state are migrated. The SQLite
 // database is created if it does not exist.
+//
+//	err := MigrateYAMLToSQLite("ratelimits.yaml", "ratelimits.db")
 func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
 	// Load from YAML.
 	content, err := readLocalFile(yamlPath)
@@ -618,6 +691,8 @@ func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
 }
 
 // CountTokens calls the Google API to count tokens for a prompt.
+//
+//	tokens, err := CountTokens(ctx, apiKey, "gemini-3-pro-preview", prompt)
 func CountTokens(ctx context.Context, apiKey, model, text string) (int, error) {
 	return countTokensWithClient(ctx, http.DefaultClient, "https://generativelanguage.googleapis.com", apiKey, model, text)
 }
@@ -722,9 +797,9 @@ func normaliseBackend(backend string) (string, error) {
 }
 
 func defaultStatePath(backend string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	home := currentHomeDir()
+	if home == "" {
+		return "", core.E("ratelimit.defaultStatePath", "home dir unavailable", nil)
 	}
 
 	fileName := defaultYAMLStateFile
@@ -733,6 +808,15 @@ func defaultStatePath(backend string) (string, error) {
 	}
 
 	return core.Path(home, defaultStateDirName, fileName), nil
+}
+
+func currentHomeDir() string {
+	for _, key := range []string{"CORE_HOME", "HOME", "home", "USERPROFILE"} {
+		if value := core.Trim(core.Env(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func safeTokenSum(a, b int) int {
@@ -762,7 +846,7 @@ func safeTokenTotal(tokens []TokenEntry) int {
 
 func countTokensURL(baseURL, model string) (string, error) {
 	if core.Trim(model) == "" {
-		return "", core.NewError("empty model")
+		return "", core.E("ratelimit.countTokensURL", "empty model", nil)
 	}
 
 	parsed, err := url.Parse(baseURL)
@@ -770,7 +854,7 @@ func countTokensURL(baseURL, model string) (string, error) {
 		return "", err
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", core.NewError("invalid base url")
+		return "", core.E("ratelimit.countTokensURL", "invalid base url", nil)
 	}
 
 	return core.Concat(core.TrimSuffix(parsed.String(), "/"), "/v1beta/models/", url.PathEscape(model), ":countTokens"), nil
@@ -803,7 +887,7 @@ func readLocalFile(path string) (string, error) {
 
 	content, ok := result.Value.(string)
 	if !ok {
-		return "", core.NewError("read returned non-string")
+		return "", core.E("ratelimit.readLocalFile", "read returned non-string", nil)
 	}
 	return content, nil
 }
@@ -828,5 +912,5 @@ func resultError(result core.Result) error {
 	if result.Value == nil {
 		return nil
 	}
-	return core.NewError(core.Sprint(result.Value))
+	return core.E("ratelimit.resultError", core.Sprint(result.Value), nil)
 }

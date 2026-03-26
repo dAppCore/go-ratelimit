@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIterators(t *testing.T) {
+func TestIter_Iterators_Good(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Quotas: map[string]ModelQuota{
 			"model-c": {MaxRPM: 10},
@@ -77,7 +77,7 @@ func TestIterators(t *testing.T) {
 	})
 }
 
-func TestIterEarlyBreak(t *testing.T) {
+func TestIter_IterEarlyBreak_Good(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Quotas: map[string]ModelQuota{
 			"model-a": {MaxRPM: 10},
@@ -110,7 +110,7 @@ func TestIterEarlyBreak(t *testing.T) {
 	})
 }
 
-func TestCountTokensFull(t *testing.T) {
+func TestIter_CountTokensFull_Ugly(t *testing.T) {
 	t.Run("empty model is rejected", func(t *testing.T) {
 		_, err := CountTokens(context.Background(), "key", "", "text")
 		assert.Error(t, err)
