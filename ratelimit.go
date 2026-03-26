@@ -1,24 +1,18 @@
 package ratelimit
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
 	"iter"
 	"maps"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
-	coreio "dappco.re/go/core/io"
-	coreerr "dappco.re/go/core/log"
+	core "dappco.re/go/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -170,8 +164,8 @@ func NewWithConfig(cfg Config) (*RateLimiter, error) {
 
 	if backend == backendSQLite {
 		if cfg.FilePath == "" {
-			if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-				return nil, coreerr.E("ratelimit.NewWithConfig", "mkdir", err)
+			if err := ensureDir(core.PathDir(filePath)); err != nil {
+				return nil, core.E("ratelimit.NewWithConfig", "mkdir", err)
 			}
 		}
 		return NewWithSQLiteConfig(filePath, cfg)
@@ -210,7 +204,7 @@ func (rl *RateLimiter) Load() error {
 		return rl.loadSQLite()
 	}
 
-	content, err := coreio.Local.Read(rl.filePath)
+	content, err := readLocalFile(rl.filePath)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -265,7 +259,7 @@ func (rl *RateLimiter) Persist() error {
 
 	if sqlite != nil {
 		if err := sqlite.saveSnapshot(quotas, state); err != nil {
-			return coreerr.E("ratelimit.Persist", "sqlite snapshot", err)
+			return core.E("ratelimit.Persist", "sqlite snapshot", err)
 		}
 		return nil
 	}
@@ -280,11 +274,11 @@ func (rl *RateLimiter) Persist() error {
 		State:  state,
 	})
 	if err != nil {
-		return coreerr.E("ratelimit.Persist", "marshal", err)
+		return core.E("ratelimit.Persist", "marshal", err)
 	}
 
-	if err := coreio.Local.Write(filePath, string(data)); err != nil {
-		return coreerr.E("ratelimit.Persist", "write", err)
+	if err := writeLocalFile(filePath, string(data)); err != nil {
+		return core.E("ratelimit.Persist", "write", err)
 	}
 	return nil
 }
@@ -428,7 +422,7 @@ func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int)
 // WaitForCapacity blocks until capacity is available or context is cancelled.
 func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error {
 	if tokens < 0 {
-		return coreerr.E("ratelimit.WaitForCapacity", "negative tokens", nil)
+		return core.E("ratelimit.WaitForCapacity", "negative tokens", nil)
 	}
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -600,14 +594,14 @@ func (rl *RateLimiter) Close() error {
 // database is created if it does not exist.
 func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
 	// Load from YAML.
-	content, err := coreio.Local.Read(yamlPath)
+	content, err := readLocalFile(yamlPath)
 	if err != nil {
-		return coreerr.E("ratelimit.MigrateYAMLToSQLite", "read", err)
+		return core.E("ratelimit.MigrateYAMLToSQLite", "read", err)
 	}
 
 	var rl RateLimiter
 	if err := yaml.Unmarshal([]byte(content), &rl); err != nil {
-		return coreerr.E("ratelimit.MigrateYAMLToSQLite", "unmarshal", err)
+		return core.E("ratelimit.MigrateYAMLToSQLite", "unmarshal", err)
 	}
 
 	// Write to SQLite.
@@ -631,7 +625,7 @@ func CountTokens(ctx context.Context, apiKey, model, text string) (int, error) {
 func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, apiKey, model, text string) (int, error) {
 	requestURL, err := countTokensURL(baseURL, model)
 	if err != nil {
-		return 0, coreerr.E("ratelimit.CountTokens", "build url", err)
+		return 0, core.E("ratelimit.CountTokens", "build url", err)
 	}
 
 	reqBody := map[string]any{
@@ -644,14 +638,14 @@ func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, ap
 		},
 	}
 
-	jsonBody, err := json.Marshal(reqBody)
-	if err != nil {
-		return 0, coreerr.E("ratelimit.CountTokens", "marshal request", err)
+	jsonBody := core.JSONMarshal(reqBody)
+	if !jsonBody.OK {
+		return 0, core.E("ratelimit.CountTokens", "marshal request", resultError(jsonBody))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, core.NewReader(string(jsonBody.Value.([]byte))))
 	if err != nil {
-		return 0, coreerr.E("ratelimit.CountTokens", "new request", err)
+		return 0, core.E("ratelimit.CountTokens", "new request", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", apiKey)
@@ -662,23 +656,29 @@ func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, ap
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, coreerr.E("ratelimit.CountTokens", "do request", err)
+		return 0, core.E("ratelimit.CountTokens", "do request", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := readLimitedBody(resp.Body, countTokensErrorBodyLimit)
 		if err != nil {
-			return 0, coreerr.E("ratelimit.CountTokens", "read error body", err)
+			return 0, core.E("ratelimit.CountTokens", "read error body", err)
 		}
-		return 0, coreerr.E("ratelimit.CountTokens", fmt.Sprintf("api error status %d: %s", resp.StatusCode, body), nil)
+		return 0, core.E("ratelimit.CountTokens", core.Sprintf("api error status %d: %s", resp.StatusCode, body), nil)
+	}
+
+	body, err := readLimitedBody(resp.Body, countTokensSuccessBodyLimit)
+	if err != nil {
+		return 0, core.E("ratelimit.CountTokens", "decode response", err)
 	}
 
 	var result struct {
 		TotalTokens int `json:"totalTokens"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, countTokensSuccessBodyLimit)).Decode(&result); err != nil {
-		return 0, coreerr.E("ratelimit.CountTokens", "decode response", err)
+	decode := core.JSONUnmarshalString(body, &result)
+	if !decode.OK {
+		return 0, core.E("ratelimit.CountTokens", "decode response", resultError(decode))
 	}
 
 	return result.TotalTokens, nil
@@ -711,13 +711,13 @@ func applyConfig(rl *RateLimiter, cfg Config) {
 }
 
 func normaliseBackend(backend string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
+	switch core.Lower(core.Trim(backend)) {
 	case "", backendYAML:
 		return backendYAML, nil
 	case backendSQLite:
 		return backendSQLite, nil
 	default:
-		return "", coreerr.E("ratelimit.NewWithConfig", fmt.Sprintf("unknown backend %q", backend), nil)
+		return "", core.E("ratelimit.NewWithConfig", core.Sprintf("unknown backend %q", backend), nil)
 	}
 }
 
@@ -732,7 +732,7 @@ func defaultStatePath(backend string) (string, error) {
 		fileName = defaultSQLiteStateFile
 	}
 
-	return filepath.Join(home, defaultStateDirName, fileName), nil
+	return core.Path(home, defaultStateDirName, fileName), nil
 }
 
 func safeTokenSum(a, b int) int {
@@ -761,8 +761,8 @@ func safeTokenTotal(tokens []TokenEntry) int {
 }
 
 func countTokensURL(baseURL, model string) (string, error) {
-	if strings.TrimSpace(model) == "" {
-		return "", fmt.Errorf("empty model")
+	if core.Trim(model) == "" {
+		return "", core.NewError("empty model")
 	}
 
 	parsed, err := url.Parse(baseURL)
@@ -770,10 +770,10 @@ func countTokensURL(baseURL, model string) (string, error) {
 		return "", err
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid base url")
+		return "", core.NewError("invalid base url")
 	}
 
-	return strings.TrimRight(parsed.String(), "/") + "/v1beta/models/" + url.PathEscape(model) + ":countTokens", nil
+	return core.Concat(core.TrimSuffix(parsed.String(), "/"), "/v1beta/models/", url.PathEscape(model), ":countTokens"), nil
 }
 
 func readLimitedBody(r io.Reader, limit int64) (string, error) {
@@ -792,4 +792,41 @@ func readLimitedBody(r io.Reader, limit int64) (string, error) {
 		result += "..."
 	}
 	return result, nil
+}
+
+func readLocalFile(path string) (string, error) {
+	var fs core.Fs
+	result := fs.Read(path)
+	if !result.OK {
+		return "", resultError(result)
+	}
+
+	content, ok := result.Value.(string)
+	if !ok {
+		return "", core.NewError("read returned non-string")
+	}
+	return content, nil
+}
+
+func writeLocalFile(path, content string) error {
+	var fs core.Fs
+	return resultError(fs.Write(path, content))
+}
+
+func ensureDir(path string) error {
+	var fs core.Fs
+	return resultError(fs.EnsureDir(path))
+}
+
+func resultError(result core.Result) error {
+	if result.OK {
+		return nil
+	}
+	if err, ok := result.Value.(error); ok {
+		return err
+	}
+	if result.Value == nil {
+		return nil
+	}
+	return core.NewError(core.Sprint(result.Value))
 }
