@@ -1,4 +1,6 @@
-module forge.lthn.ai/core/go-ratelimit
+// SPDX-License-Identifier: EUPL-1.2
+
+module dappco.re/go/core/go-ratelimit
 
 go 1.26.0
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: EUPL-1.2
+
 package ratelimit
 
 import (
@@ -647,7 +649,7 @@ func TestError_MigrateYAMLToSQLiteNilQuotasAndState_Good(t *testing.T) {
 	})
 }
 
-func TestError_NewWithConfigUserHomeDir_Bad(t *testing.T) {
+func TestError_NewWithConfigHomeUnavailable_Bad(t *testing.T) {
 	// Clear all supported home env vars so defaultStatePath cannot resolve a home directory.
 	t.Setenv("CORE_HOME", "")
 	t.Setenv("HOME", "")

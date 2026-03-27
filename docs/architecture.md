@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 ---
 title: Architecture
 description: Internals of go-ratelimit -- sliding window algorithm, provider quota system, persistence backends, and concurrency model.
@@ -10,7 +12,7 @@ three independent quota dimensions per model -- requests per minute (RPM), token
 per minute (TPM), and requests per day (RPD) -- using an in-memory sliding window
 that can be persisted across process restarts via YAML or SQLite.
 
-Module path: `forge.lthn.ai/core/go-ratelimit`
+Module path: `dappco.re/go/core/go-ratelimit`
 
 ---
 
@@ -252,7 +254,7 @@ state:
     day_count: 42
 ```
 
-`Persist()` creates parent directories with `os.MkdirAll` before writing.
+`Persist()` creates parent directories with the `core.Fs` helper before writing.
 `Load()` treats a missing file as an empty state (no error). Corrupt or
 unreadable files return an error.
 
@@ -317,8 +319,8 @@ precision and allows efficient range queries using the composite indices.
 
 ### Save Strategy
 
-- **Quotas**: `INSERT ... ON CONFLICT(model) DO UPDATE` (upsert). Existing quota
-  rows are updated in place without deleting unrelated models.
+- **Quotas**: full snapshot replace inside a single transaction. `saveQuotas()`
+  clears the table and reinserts the current quota map.
 - **State**: Delete-then-insert inside a single transaction. All three state
   tables (`requests`, `tokens`, `daily`) are truncated and rewritten atomically.
 
