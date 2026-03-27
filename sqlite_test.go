@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: EUPL-1.2
+
 package ratelimit
 
 import (
@@ -57,8 +59,8 @@ func TestSQLite_QuotasRoundTrip_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_QuotasUpsert_Good(t *testing.T) {
-	dbPath := testPath(t.TempDir(), "upsert.db")
+func TestSQLite_QuotasOverwrite_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "overwrite.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
@@ -68,7 +70,7 @@ func TestSQLite_QuotasUpsert_Good(t *testing.T) {
 		"model-a": {MaxRPM: 100, MaxTPM: 50000, MaxRPD: 1000},
 	}))
 
-	// Upsert with updated values.
+	// Save a second snapshot with updated values.
 	require.NoError(t, store.saveQuotas(map[string]ModelQuota{
 		"model-a": {MaxRPM: 999, MaxTPM: 888, MaxRPD: 777},
 	}))

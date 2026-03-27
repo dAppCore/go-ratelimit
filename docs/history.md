@@ -1,10 +1,13 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 # Project History
 
 ## Origin
 
 go-ratelimit was extracted from the `pkg/ratelimit` package inside
-`forge.lthn.ai/core/go` on 19 February 2026. The extraction gave the package
-its own module path, repository, and independent development cadence.
+`forge.lthn.ai/core/go` on 19 February 2026. The package now lives at
+`dappco.re/go/core/go-ratelimit`, with its own repository and independent
+development cadence.
 
 Initial commit: `fa1a6fc` — `feat: extract go-ratelimit from core/go pkg/ratelimit`
 
@@ -25,7 +28,7 @@ Commit: `3c63b10` — `feat(ratelimit): generalise beyond Gemini with provider p
 
 Supplementary commit: `db958f2` — `test: expand race coverage and benchmarks`
 
-Coverage increased from 77.1% to 95.1%. The test suite was rewritten using
+Coverage increased from 77.1% to above the 95% floor. The test suite was rewritten using
 testify with table-driven subtests throughout.
 
 ### Tests added
@@ -57,18 +60,6 @@ testify with table-driven subtests throughout.
 - `BenchmarkStats` — 1,000-entry window
 - `BenchmarkAllStats` — 5 models x 200 entries
 - `BenchmarkPersist` — YAML I/O
-
-### Remaining uncovered paths (5%)
-
-These three paths are structurally impossible to cover in unit tests without
-modifying production code:
-
-1. `CountTokens` success path — the Google API URL is hardcoded; unit tests
-   cannot intercept the HTTP call without URL injection support
-2. `yaml.Marshal` error path in `Persist()` — `yaml.Marshal` does not fail on
-   valid Go structs; the error branch exists for correctness only
-3. `os.UserHomeDir()` error path in `NewWithConfig()` — triggered only when
-   `$HOME` is unset, which test infrastructure prevents
 
 `go test -race ./...` passed clean. `go vet ./...` produced no warnings.
 
@@ -139,7 +130,7 @@ established elsewhere in the ecosystem.
 
 - `TestNewSQLiteStore_Good / _Bad` — creation and invalid path handling
 - `TestSQLiteQuotasRoundTrip_Good` — save/load round-trip
-- `TestSQLiteQuotasUpsert_Good` — upsert replaces existing rows
+- `TestSQLite_QuotasOverwrite_Good` — the latest quota snapshot replaces previous rows
 - `TestSQLiteStateRoundTrip_Good` — multi-model state with nanosecond precision
 - `TestSQLiteStateOverwrite_Good` — delete-then-insert atomicity
 - `TestSQLiteEmptyState_Good` — fresh database returns empty maps
@@ -168,11 +159,10 @@ Not yet implemented. Intended downstream integrations:
 
 ## Known Limitations
 
-**CountTokens URL is hardcoded.** The `CountTokens` helper calls
-`generativelanguage.googleapis.com` directly. There is no way to override the
-base URL, which prevents testing the success path in unit tests and prevents
-use with Gemini-compatible proxies. A future refactor would accept a base URL
-parameter or an `http.Client`.
+**CountTokens URL is hardcoded.** The exported `CountTokens` helper calls
+`generativelanguage.googleapis.com` directly. Callers cannot redirect it to
+Gemini-compatible proxies or alternate endpoints without going through an
+internal helper or refactoring the API to accept a base URL or `http.Client`.
 
 **saveState is a full table replace.** On every `Persist()` call, the `requests`,
 `tokens`, and `daily` tables are truncated and rewritten. For a limiter tracking

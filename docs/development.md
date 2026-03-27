@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 ---
 title: Development Guide
 description: How to build, test, and contribute to go-ratelimit -- prerequisites, test patterns, coding standards, and commit conventions.
@@ -18,6 +20,9 @@ No C toolchain, no system SQLite library, no external build tools. A plain
 ## Build and Test
 
 ```bash
+# Compile all packages
+go build ./...
+
 # Run all tests
 go test ./...
 
@@ -42,12 +47,16 @@ go vet ./...
 # Lint (requires golangci-lint)
 golangci-lint run ./...
 
+# Coverage check
+go test -cover ./...
+
 # Tidy dependencies
 go mod tidy
 ```
 
-All three commands (`go test -race ./...`, `go vet ./...`, and `go mod tidy`)
-must produce no errors or warnings before a commit is pushed.
+Before a commit is pushed, `go build ./...`, `go test -race ./...`,
+`go vet ./...`, `go test -cover ./...`, and `go mod tidy` must all pass
+without errors, and coverage must remain at or above 95%.
 
 ---
 
@@ -147,17 +156,8 @@ The following benchmarks are included:
 
 ### Coverage
 
-Current coverage: 95.1%. The remaining paths cannot be covered in unit tests
-without modifying production code:
-
-1. `CountTokens` success path -- the Google API URL is hardcoded; unit tests
-   cannot intercept the HTTP call without URL injection support.
-2. `yaml.Marshal` error path in `Persist()` -- `yaml.Marshal` does not fail on
-   valid Go structs.
-3. `os.UserHomeDir()` error path in `NewWithConfig()` -- triggered only when
-   `$HOME` is unset, which test infrastructure prevents.
-
-Do not lower coverage below 95% without a documented reason.
+Maintain at least 95% statement coverage. Verify it with `go test -cover ./...`
+and document any justified exception in the commit or PR that introduces it.
 
 ---
 
@@ -172,8 +172,8 @@ Do not use American spellings in identifiers, comments, or documentation.
 
 - All exported types, functions, and fields must have doc comments.
 - Error strings must be lowercase and not end with punctuation (Go convention).
-- Contextual errors use `fmt.Errorf("ratelimit.Function: what: %w", err)` so
-  errors identify their origin clearly.
+- Contextual errors use `core.E("ratelimit.Function", "what", err)` so errors
+  identify their origin clearly.
 - No `init()` functions.
 - No global mutable state. `DefaultProfiles()` returns a fresh map on each call.
 
@@ -196,6 +196,7 @@ Direct dependencies are intentionally minimal:
 
 | Dependency | Purpose |
 |------------|---------|
+| `dappco.re/go/core` | File I/O helpers, structured errors, JSON helpers, path/environment utilities |
 | `gopkg.in/yaml.v3` | YAML serialisation for legacy backend |
 | `modernc.org/sqlite` | Pure Go SQLite for persistent backend |
 | `github.com/stretchr/testify` | Test assertions (test-only) |

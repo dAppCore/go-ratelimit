@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 # API Contract
 
 Test coverage is marked `yes` when the symbol is exercised by the existing test suite in `ratelimit_test.go`, `sqlite_test.go`, `error_test.go`, or `iter_test.go`.

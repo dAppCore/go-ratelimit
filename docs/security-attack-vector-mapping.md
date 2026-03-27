@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 # Security Attack Vector Mapping
 
 Scope: external inputs that cross into this package from callers, persisted storage, or the network. This is a mapping only; it does not propose or apply fixes.
