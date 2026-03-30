@@ -86,6 +86,8 @@ if err := rl.WaitForCapacity(ctx, "claude-opus-4", 2000); err != nil {
     return
 }
 // Capacity is available; proceed with the API call.
+
+// WaitForCapacity uses Decide's RetryAfter hint to avoid tight polling.
 ```
 
 ## Package Layout

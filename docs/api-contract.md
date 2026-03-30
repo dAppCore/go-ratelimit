@@ -14,6 +14,8 @@ Test coverage is marked `yes` when the symbol is exercised by the existing test 
 | Type | `UsageStats` | `type UsageStats struct { Requests []time.Time; Tokens []TokenEntry; DayStart time.Time; DayCount int }` | Stores per-model sliding-window request and token history plus rolling daily usage state. | yes |
 | Type | `RateLimiter` | `type RateLimiter struct { Quotas map[string]ModelQuota; State map[string]*UsageStats }` | Manages quotas, usage state, persistence, and concurrency across models. | yes |
 | Type | `ModelStats` | `type ModelStats struct { RPM int; MaxRPM int; TPM int; MaxTPM int; RPD int; MaxRPD int; DayStart time.Time }` | Represents a snapshot of current usage and configured limits for a model. | yes |
+| Type | `DecisionCode` | `type DecisionCode string` | Machine-readable allow/deny codes returned by `Decide` (e.g., `ok`, `rpm_exceeded`). | yes |
+| Type | `Decision` | `type Decision struct { Allowed bool; Code DecisionCode; Reason string; RetryAfter time.Duration; Stats ModelStats }` | Structured decision result with a code, human-readable reason, optional retry guidance, and a stats snapshot. | yes |
 | Function | `DefaultProfiles` | `func DefaultProfiles() map[Provider]ProviderProfile` | Returns the built-in quota profiles for the supported providers. | yes |
 | Function | `New` | `func New() (*RateLimiter, error)` | Creates a new limiter with Gemini defaults for backward-compatible YAML-backed usage. | yes |
 | Function | `NewWithConfig` | `func NewWithConfig(cfg Config) (*RateLimiter, error)` | Creates a YAML-backed limiter from explicit configuration, defaulting to Gemini when config is empty. | yes |
@@ -27,8 +29,9 @@ Test coverage is marked `yes` when the symbol is exercised by the existing test 
 | Method | `Persist` | `func (rl *RateLimiter) Persist() error` | Persists a snapshot of quotas and usage state to YAML or SQLite. | yes |
 | Method | `BackgroundPrune` | `func (rl *RateLimiter) BackgroundPrune(interval time.Duration) func()` | Starts periodic pruning of expired usage state and returns a stop function. | yes |
 | Method | `CanSend` | `func (rl *RateLimiter) CanSend(model string, estimatedTokens int) bool` | Reports whether a request with the estimated token count fits within current limits. | yes |
+| Method | `Decide` | `func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision` | Returns structured allow/deny information including code, reason, retry guidance, and stats snapshot without recording usage. | yes |
 | Method | `RecordUsage` | `func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int)` | Records a successful request into the sliding-window and daily counters. | yes |
-| Method | `WaitForCapacity` | `func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error` | Blocks until `CanSend` succeeds or the context is cancelled. | yes |
+| Method | `WaitForCapacity` | `func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error` | Blocks until `Decide` allows the request, sleeping according to `RetryAfter` hints or one-second polls. | yes |
 | Method | `Reset` | `func (rl *RateLimiter) Reset(model string)` | Clears usage state for one model or for all models when `model` is empty. | yes |
 | Method | `Models` | `func (rl *RateLimiter) Models() iter.Seq[string]` | Returns a sorted iterator of all model names known from quotas or state. | yes |
 | Method | `Iter` | `func (rl *RateLimiter) Iter() iter.Seq2[string, ModelStats]` | Returns a sorted iterator of model names paired with current stats snapshots. | yes |

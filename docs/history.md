@@ -176,10 +176,10 @@ SQLite on `Persist()`. The database does not grow unboundedly between persist
 cycles because `saveState` replaces all rows, but if `Persist()` is called
 frequently the WAL file can grow transiently.
 
-**WaitForCapacity polling interval is fixed at 1 second.** This is appropriate
-for RPM-scale limits but is coarse for sub-second limits. If a caller needs
-finer-grained waiting (e.g., smoothing requests within a minute), they must
-implement their own loop.
+**WaitForCapacity now sleeps using `Decide`’s `RetryAfter` hint** (with a
+one-second fallback when no hint exists). This reduces busy looping on long
+windows but remains coarse for sub-second smoothing; callers that need
+sub-second pacing should implement their own loop.
 
 **No automatic persistence.** `Persist()` must be called explicitly. If a
 process exits without calling `Persist()`, any usage recorded since the last

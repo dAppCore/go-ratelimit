@@ -253,6 +253,125 @@ func TestRatelimit_CanSend_Good(t *testing.T) {
 	})
 }
 
+// --- Phase 0: Decide surface area ---
+
+func TestRatelimit_Decide_Good(t *testing.T) {
+	t.Run("unknown model remains allowed with unknown code", func(t *testing.T) {
+		rl := newTestLimiter(t)
+
+		decision := rl.Decide("unknown-model", 50)
+
+		assert.True(t, decision.Allowed)
+		assert.Equal(t, DecisionUnknownModel, decision.Code)
+		assert.Zero(t, decision.RetryAfter)
+	})
+
+	t.Run("unlimited quota reports unlimited decision", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "unlimited"
+		rl.Quotas[model] = ModelQuota{}
+
+		decision := rl.Decide(model, 100)
+
+		assert.True(t, decision.Allowed)
+		assert.Equal(t, DecisionUnlimited, decision.Code)
+		assert.Equal(t, 0, decision.Stats.MaxRPM)
+		assert.Equal(t, 0, decision.Stats.MaxTPM)
+		assert.Equal(t, 0, decision.Stats.MaxRPD)
+	})
+
+	t.Run("rpd limit returns retry window", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "rpd-limit"
+		now := time.Now()
+		rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 1000, MaxRPD: 2}
+		rl.State[model] = &UsageStats{DayStart: now.Add(-23 * time.Hour), DayCount: 2}
+
+		decision := rl.Decide(model, 10)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionRPDLimit, decision.Code)
+		assert.InDelta(t, time.Hour.Seconds(), decision.RetryAfter.Seconds(), 2)
+		assert.Equal(t, 2, decision.Stats.MaxRPD)
+		assert.Equal(t, 2, decision.Stats.RPD)
+	})
+
+	t.Run("rpm limit includes retry-after estimate", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "rpm-limit"
+		now := time.Now()
+		rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 5}
+		rl.State[model] = &UsageStats{
+			Requests: []time.Time{now.Add(-10 * time.Second)},
+			Tokens:   []TokenEntry{{Time: now.Add(-10 * time.Second), Count: 10}},
+			DayStart: now,
+			DayCount: 1,
+		}
+
+		decision := rl.Decide(model, 5)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionRPMLimit, decision.Code)
+		assert.InDelta(t, 50, decision.RetryAfter.Seconds(), 1)
+	})
+
+	t.Run("tpm limit surfaces earliest expiry", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "tpm-limit"
+		now := time.Now()
+		rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+		rl.State[model] = &UsageStats{
+			Requests: []time.Time{now.Add(-30 * time.Second)},
+			Tokens: []TokenEntry{
+				{Time: now.Add(-50 * time.Second), Count: 70},
+				{Time: now.Add(-10 * time.Second), Count: 20},
+			},
+			DayStart: now,
+			DayCount: 2,
+		}
+
+		decision := rl.Decide(model, 20)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionTPMLimit, decision.Code)
+		assert.InDelta(t, 10, decision.RetryAfter.Seconds(), 1)
+	})
+
+	t.Run("allowed decision carries stats snapshot", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "decide-allowed"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 5, MaxTPM: 200, MaxRPD: 3}
+		now := time.Now()
+		rl.State[model] = &UsageStats{
+			Requests: []time.Time{now.Add(-5 * time.Second)},
+			Tokens:   []TokenEntry{{Time: now.Add(-5 * time.Second), Count: 30}},
+			DayStart: now,
+			DayCount: 1,
+		}
+
+		decision := rl.Decide(model, 20)
+
+		assert.True(t, decision.Allowed)
+		assert.Equal(t, DecisionAllowed, decision.Code)
+		assert.Equal(t, 1, decision.Stats.RPM)
+		assert.Equal(t, 30, decision.Stats.TPM)
+		assert.Equal(t, 1, decision.Stats.RPD)
+		assert.Equal(t, 5, decision.Stats.MaxRPM)
+		assert.Equal(t, 200, decision.Stats.MaxTPM)
+		assert.Equal(t, 3, decision.Stats.MaxRPD)
+	})
+
+	t.Run("negative estimate returns invalid decision", func(t *testing.T) {
+		rl := newTestLimiter(t)
+
+		decision := rl.Decide("neg", -5)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionInvalidTokens, decision.Code)
+		assert.Zero(t, decision.RetryAfter)
+	})
+}
+
 // --- Phase 0: Sliding window / prune tests ---
 
 func TestRatelimit_Prune_Good(t *testing.T) {

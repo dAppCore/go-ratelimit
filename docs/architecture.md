@@ -119,6 +119,12 @@ The check order is: RPD, then RPM, then TPM. RPD is checked first because it
 is the cheapest comparison (a single integer). TPM is checked last because it
 requires summing the token counts in the sliding window.
 
+`Decide()` follows the same path as `CanSend()` but returns a structured
+`Decision` containing a machine-readable code, reason, `RetryAfter` guidance,
+and a `ModelStats` snapshot. It is agent-facing and does not record usage;
+`WaitForCapacity()` consumes its `RetryAfter` hint to avoid unnecessary
+one-second polling when limits are saturated.
+
 ### Daily Reset
 
 The daily counter resets automatically inside `prune()`. When

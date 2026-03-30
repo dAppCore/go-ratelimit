@@ -75,6 +75,16 @@
 - `MaxRPD int`: configured requests-per-day limit.
 - `DayStart time.Time`: start of the current rolling 24-hour window. This is zero if the model has no recorded state.
 
+### `DecisionCode`
+`type DecisionCode string`
+
+`DecisionCode` enumerates machine-readable allow/deny codes returned by `Decide`. Defined values: `ok`, `unknown_model`, `unlimited`, `invalid_tokens`, `rpd_exceeded`, `rpm_exceeded`, and `tpm_exceeded`.
+
+### `Decision`
+`type Decision struct`
+
+`Decision` bundles the outcome from `Decide`, including whether the request is allowed, a `DecisionCode`, a human-readable `Reason`, an optional `RetryAfter` duration when throttled, and a `ModelStats` snapshot at the time of evaluation.
+
 ## Functions
 
 ### `DefaultProfiles() map[Provider]ProviderProfile`
@@ -104,11 +114,14 @@ Starts a background goroutine that prunes expired entries from every tracked mod
 ### `func (rl *RateLimiter) CanSend(model string, estimatedTokens int) bool`
 Reports whether a request for `model` can be sent without violating the configured limits. Negative token estimates are rejected. Models with no configured quota are allowed. If all three limits for a known model are `0`, the model is treated as unlimited. Before evaluating the request, the limiter prunes entries older than one minute and resets the rolling daily counter when its 24-hour window has elapsed. The method then checks requests-per-day, requests-per-minute, and tokens-per-minute against the estimated token count.
 
+### `func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision`
+Returns a structured allow/deny decision for the estimated request. The result includes a `DecisionCode`, a human-readable `Reason`, optional `RetryAfter` guidance when throttled, and a `ModelStats` snapshot. It prunes expired state, initialises empty state for configured models, but does not record usage.
+
 ### `func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int)`
 Records a successful request for `model`. The limiter prunes stale entries first, creates state for the model if needed, appends the current timestamp to the request window, appends a token entry containing the combined prompt and output token count, and increments the rolling daily counter. Negative token values are ignored by the internal token summation logic rather than reducing the recorded total.
 
 ### `func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error`
-Blocks until `CanSend(model, tokens)` succeeds or `ctx` is cancelled. The method polls once per second. If `tokens` is negative, it returns an error immediately.
+Blocks until `Decide(model, tokens)` allows the request or `ctx` is cancelled. The method uses the `RetryAfter` hint from `Decide` to sleep between checks, falling back to one-second polling when no hint is available. If `tokens` is negative, it returns an error immediately.
 
 ### `func (rl *RateLimiter) Reset(model string)`
 Clears usage state without changing quotas. If `model` is empty, it drops all tracked state. Otherwise it removes state only for the named model.

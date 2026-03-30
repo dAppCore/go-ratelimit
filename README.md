@@ -39,6 +39,15 @@ if err := rl.Persist(); err != nil {
 }
 ```
 
+For agent workflows, `Decide` returns a structured verdict with retry guidance:
+
+```go
+decision := rl.Decide("gemini-2.0-flash", 1500)
+if !decision.Allowed {
+    log.Printf("throttled (%s); retry after %s", decision.Code, decision.RetryAfter)
+}
+```
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — sliding window algorithm, provider quotas, YAML and SQLite backends

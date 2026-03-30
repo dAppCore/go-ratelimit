@@ -399,49 +399,7 @@ func (rl *RateLimiter) BackgroundPrune(interval time.Duration) func() {
 //
 //	ok := rl.CanSend("gemini-3-pro-preview", 1200)
 func (rl *RateLimiter) CanSend(model string, estimatedTokens int) bool {
-	if estimatedTokens < 0 {
-		return false
-	}
-
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	quota, ok := rl.Quotas[model]
-	if !ok {
-		return true // Unknown models are allowed
-	}
-
-	// Unlimited check
-	if quota.MaxRPM == 0 && quota.MaxTPM == 0 && quota.MaxRPD == 0 {
-		return true
-	}
-
-	rl.prune(model)
-	stats, ok := rl.State[model]
-	if !ok {
-		stats = &UsageStats{DayStart: time.Now()}
-		rl.State[model] = stats
-	}
-
-	// Check RPD
-	if quota.MaxRPD > 0 && stats.DayCount >= quota.MaxRPD {
-		return false
-	}
-
-	// Check RPM
-	if quota.MaxRPM > 0 && len(stats.Requests) >= quota.MaxRPM {
-		return false
-	}
-
-	// Check TPM
-	if quota.MaxTPM > 0 {
-		currentTokens := totalTokenCount(stats.Tokens)
-		if estimatedTokens > quota.MaxTPM || currentTokens > quota.MaxTPM-estimatedTokens {
-			return false
-		}
-	}
-
-	return true
+	return rl.Decide(model, estimatedTokens).Allowed
 }
 
 // RecordUsage records a successful API call.
@@ -473,19 +431,24 @@ func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens
 		return core.E("ratelimit.WaitForCapacity", "negative tokens", nil)
 	}
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
 	for {
-		if rl.CanSend(model, tokens) {
+		decision := rl.Decide(model, tokens)
+		if decision.Allowed {
 			return nil
 		}
 
+		sleep := decision.RetryAfter
+		if sleep <= 0 {
+			sleep = time.Second
+		}
+
+		timer := time.NewTimer(sleep)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-ticker.C:
-			// check again
+		case <-timer.C:
+			timer.Stop()
 		}
 	}
 }
@@ -522,6 +485,36 @@ type ModelStats struct {
 	MaxRPD int
 	// DayStart is the start of the current rolling 24-hour window.
 	DayStart time.Time
+}
+
+// DecisionCode identifies the reason for an allow or deny outcome from Decide.
+type DecisionCode string
+
+const (
+	// DecisionAllowed means the request fits within all configured limits.
+	DecisionAllowed DecisionCode = "ok"
+	// DecisionUnknownModel means the model has no configured quotas and is therefore allowed.
+	DecisionUnknownModel DecisionCode = "unknown_model"
+	// DecisionUnlimited means the model is configured with no limits.
+	DecisionUnlimited DecisionCode = "unlimited"
+	// DecisionInvalidTokens means a negative token estimate was provided.
+	DecisionInvalidTokens DecisionCode = "invalid_tokens"
+	// DecisionRPDLimit means the rolling 24-hour request limit has been reached.
+	DecisionRPDLimit DecisionCode = "rpd_exceeded"
+	// DecisionRPMLimit means the per-minute request limit has been reached.
+	DecisionRPMLimit DecisionCode = "rpm_exceeded"
+	// DecisionTPMLimit means the per-minute token limit would be exceeded.
+	DecisionTPMLimit DecisionCode = "tpm_exceeded"
+)
+
+// Decision captures an allow/deny decision with context for agents.
+// RetryAfter is zero when the request is allowed or when no meaningful wait time exists.
+type Decision struct {
+	Allowed    bool
+	Code       DecisionCode
+	Reason     string
+	RetryAfter time.Duration
+	Stats      ModelStats
 }
 
 // Models returns a sorted iterator over all model names tracked by the limiter.
@@ -565,24 +558,7 @@ func (rl *RateLimiter) Stats(model string) ModelStats {
 
 	rl.prune(model)
 
-	stats := ModelStats{}
-	quota, ok := rl.Quotas[model]
-	if ok {
-		stats.MaxRPM = quota.MaxRPM
-		stats.MaxTPM = quota.MaxTPM
-		stats.MaxRPD = quota.MaxRPD
-	}
-
-	if s, ok := rl.State[model]; ok {
-		stats.RPM = len(s.Requests)
-		stats.RPD = s.DayCount
-		stats.DayStart = s.DayStart
-		for _, t := range s.Tokens {
-			stats.TPM += t.Count
-		}
-	}
-
-	return stats
+	return rl.snapshotLocked(model)
 }
 
 // AllStats returns stats for all tracked models.
@@ -605,22 +581,106 @@ func (rl *RateLimiter) AllStats() map[string]ModelStats {
 	for m := range result {
 		rl.prune(m)
 
-		ms := ModelStats{}
-		if q, ok := rl.Quotas[m]; ok {
-			ms.MaxRPM = q.MaxRPM
-			ms.MaxTPM = q.MaxTPM
-			ms.MaxRPD = q.MaxRPD
-		}
-		if s, ok := rl.State[m]; ok && s != nil {
-			ms.RPM = len(s.Requests)
-			ms.RPD = s.DayCount
-			ms.DayStart = s.DayStart
-			ms.TPM = totalTokenCount(s.Tokens)
-		}
-		result[m] = ms
+		result[m] = rl.snapshotLocked(m)
 	}
 
 	return result
+}
+
+// Decide returns structured allow/deny information for an estimated request.
+// It never records usage; call RecordUsage after a successful decision.
+func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
+	if estimatedTokens < 0 {
+		return Decision{
+			Allowed: false,
+			Code:    DecisionInvalidTokens,
+			Reason:  "estimated tokens must be non-negative",
+			Stats:   rl.Stats(model),
+		}
+	}
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	decision := Decision{}
+
+	quota, ok := rl.Quotas[model]
+	if !ok {
+		decision.Allowed = true
+		decision.Code = DecisionUnknownModel
+		decision.Reason = "model has no configured quota"
+		decision.Stats = rl.snapshotLocked(model)
+		return decision
+	}
+
+	if quota.MaxRPM == 0 && quota.MaxTPM == 0 && quota.MaxRPD == 0 {
+		decision.Allowed = true
+		decision.Code = DecisionUnlimited
+		decision.Reason = "all limits are unlimited"
+		decision.Stats = rl.snapshotLocked(model)
+		return decision
+	}
+
+	rl.prune(model)
+	stats, ok := rl.State[model]
+	if !ok || stats == nil {
+		stats = &UsageStats{DayStart: now}
+		rl.State[model] = stats
+	}
+
+	decision.Stats = rl.snapshotLocked(model)
+
+	if quota.MaxRPD > 0 && stats.DayCount >= quota.MaxRPD {
+		decision.Code = DecisionRPDLimit
+		decision.Reason = "daily request limit reached"
+		decision.RetryAfter = nonNegativeDuration(stats.DayStart.Add(24 * time.Hour).Sub(now))
+		return decision
+	}
+
+	if quota.MaxRPM > 0 && len(stats.Requests) >= quota.MaxRPM {
+		decision.Code = DecisionRPMLimit
+		decision.Reason = "per-minute request limit reached"
+		if len(stats.Requests) > 0 {
+			decision.RetryAfter = nonNegativeDuration(stats.Requests[0].Add(time.Minute).Sub(now))
+		}
+		return decision
+	}
+
+	if quota.MaxTPM > 0 {
+		currentTokens := totalTokenCount(stats.Tokens)
+		if estimatedTokens > quota.MaxTPM || currentTokens > quota.MaxTPM-estimatedTokens {
+			decision.Code = DecisionTPMLimit
+			decision.Reason = "per-minute token limit reached"
+			decision.RetryAfter = retryAfterForTokens(now, stats.Tokens, quota.MaxTPM, estimatedTokens)
+			return decision
+		}
+	}
+
+	decision.Allowed = true
+	decision.Code = DecisionAllowed
+	decision.Reason = "within quota"
+	return decision
+}
+
+// snapshotLocked builds ModelStats for the provided model.
+// Caller must hold rl.mu.
+func (rl *RateLimiter) snapshotLocked(model string) ModelStats {
+	stats := ModelStats{}
+
+	if q, ok := rl.Quotas[model]; ok {
+		stats.MaxRPM = q.MaxRPM
+		stats.MaxTPM = q.MaxTPM
+		stats.MaxRPD = q.MaxRPD
+	}
+
+	if s, ok := rl.State[model]; ok && s != nil {
+		stats.RPM = len(s.Requests)
+		stats.RPD = s.DayCount
+		stats.DayStart = s.DayStart
+		stats.TPM = totalTokenCount(s.Tokens)
+	}
+	return stats
 }
 
 // NewWithSQLite creates a SQLite-backed RateLimiter with Gemini defaults.
@@ -844,6 +904,37 @@ func safeTokenTotal(tokens []TokenEntry) int {
 		total += count
 	}
 	return total
+}
+
+func retryAfterForTokens(now time.Time, tokens []TokenEntry, maxTPM, estimatedTokens int) time.Duration {
+	if maxTPM <= 0 {
+		return 0
+	}
+
+	deficit := totalTokenCount(tokens) + estimatedTokens - maxTPM
+	if deficit <= 0 {
+		return 0
+	}
+
+	remaining := deficit
+	for _, entry := range tokens {
+		if entry.Count < 0 {
+			continue
+		}
+		remaining -= entry.Count
+		if remaining <= 0 {
+			return nonNegativeDuration(entry.Time.Add(time.Minute).Sub(now))
+		}
+	}
+
+	return 0
+}
+
+func nonNegativeDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 func countTokensURL(baseURL, model string) (string, error) {
