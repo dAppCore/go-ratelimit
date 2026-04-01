@@ -590,15 +590,6 @@ func (rl *RateLimiter) AllStats() map[string]ModelStats {
 // Decide returns structured allow/deny information for an estimated request.
 // It never records usage; call RecordUsage after a successful decision.
 func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
-	if estimatedTokens < 0 {
-		return Decision{
-			Allowed: false,
-			Code:    DecisionInvalidTokens,
-			Reason:  "estimated tokens must be non-negative",
-			Stats:   rl.Stats(model),
-		}
-	}
-
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -615,6 +606,13 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	}
 
 	if quota.MaxRPM == 0 && quota.MaxTPM == 0 && quota.MaxRPD == 0 {
+		if estimatedTokens < 0 {
+			decision.Allowed = false
+			decision.Code = DecisionInvalidTokens
+			decision.Reason = "estimated tokens must be non-negative"
+			decision.Stats = rl.snapshotLocked(model)
+			return decision
+		}
 		decision.Allowed = true
 		decision.Code = DecisionUnlimited
 		decision.Reason = "all limits are unlimited"
@@ -627,6 +625,14 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	if !ok || stats == nil {
 		stats = &UsageStats{DayStart: now}
 		rl.State[model] = stats
+	}
+
+	if estimatedTokens < 0 {
+		decision.Allowed = false
+		decision.Code = DecisionInvalidTokens
+		decision.Reason = "estimated tokens must be non-negative"
+		decision.Stats = rl.snapshotLocked(model)
+		return decision
 	}
 
 	decision.Stats = rl.snapshotLocked(model)

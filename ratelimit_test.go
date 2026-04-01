@@ -363,12 +363,17 @@ func TestRatelimit_Decide_Good(t *testing.T) {
 
 	t.Run("negative estimate returns invalid decision", func(t *testing.T) {
 		rl := newTestLimiter(t)
+		model := "neg"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 5, MaxTPM: 50, MaxRPD: 5}
 
-		decision := rl.Decide("neg", -5)
+		decision := rl.Decide(model, -5)
 
 		assert.False(t, decision.Allowed)
 		assert.Equal(t, DecisionInvalidTokens, decision.Code)
 		assert.Zero(t, decision.RetryAfter)
+		require.Contains(t, rl.State, model)
+		require.NotNil(t, rl.State[model])
+		assert.Equal(t, 0, rl.State[model].DayCount)
 	})
 }
 
