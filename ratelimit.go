@@ -249,7 +249,12 @@ func (rl *RateLimiter) Load() error {
 		return err
 	}
 
-	return yaml.Unmarshal([]byte(content), rl)
+	if err := yaml.Unmarshal([]byte(content), rl); err != nil {
+		return err
+	}
+
+	ensureMaps(rl)
+	return nil
 }
 
 // loadSQLite reads quotas and state from the SQLite backend.
@@ -596,6 +601,14 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	now := time.Now()
 	decision := Decision{}
 
+	if estimatedTokens < 0 {
+		decision.Allowed = false
+		decision.Code = DecisionInvalidTokens
+		decision.Reason = "estimated tokens must be non-negative"
+		decision.Stats = rl.snapshotLocked(model)
+		return decision
+	}
+
 	quota, ok := rl.Quotas[model]
 	if !ok {
 		decision.Allowed = true
@@ -606,13 +619,6 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	}
 
 	if quota.MaxRPM == 0 && quota.MaxTPM == 0 && quota.MaxRPD == 0 {
-		if estimatedTokens < 0 {
-			decision.Allowed = false
-			decision.Code = DecisionInvalidTokens
-			decision.Reason = "estimated tokens must be non-negative"
-			decision.Stats = rl.snapshotLocked(model)
-			return decision
-		}
 		decision.Allowed = true
 		decision.Code = DecisionUnlimited
 		decision.Reason = "all limits are unlimited"
@@ -625,14 +631,6 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	if !ok || stats == nil {
 		stats = &UsageStats{DayStart: now}
 		rl.State[model] = stats
-	}
-
-	if estimatedTokens < 0 {
-		decision.Allowed = false
-		decision.Code = DecisionInvalidTokens
-		decision.Reason = "estimated tokens must be non-negative"
-		decision.Stats = rl.snapshotLocked(model)
-		return decision
 	}
 
 	decision.Stats = rl.snapshotLocked(model)
@@ -834,6 +832,15 @@ func newConfiguredRateLimiter(cfg Config) *RateLimiter {
 	}
 	applyConfig(rl, cfg)
 	return rl
+}
+
+func ensureMaps(rl *RateLimiter) {
+	if rl.Quotas == nil {
+		rl.Quotas = make(map[string]ModelQuota)
+	}
+	if rl.State == nil {
+		rl.State = make(map[string]*UsageStats)
+	}
 }
 
 func applyConfig(rl *RateLimiter, cfg Config) {
