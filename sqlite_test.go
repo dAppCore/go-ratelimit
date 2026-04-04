@@ -1,8 +1,8 @@
+// SPDX-License-Identifier: EUPL-1.2
+
 package ratelimit
 
 import (
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -14,18 +14,17 @@ import (
 
 // --- Phase 2: SQLite basic tests ---
 
-func TestNewSQLiteStore_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+func TestSQLite_NewSQLiteStore_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "test.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
 
 	// Verify the database file was created.
-	_, statErr := os.Stat(dbPath)
-	assert.NoError(t, statErr, "database file should exist")
+	assert.True(t, pathExists(dbPath), "database file should exist")
 }
 
-func TestNewSQLiteStore_Bad(t *testing.T) {
+func TestSQLite_NewSQLiteStore_Bad(t *testing.T) {
 	t.Run("invalid path returns error", func(t *testing.T) {
 		// Path inside a non-existent directory with no parent.
 		_, err := newSQLiteStore("/nonexistent/deep/nested/dir/test.db")
@@ -33,8 +32,8 @@ func TestNewSQLiteStore_Bad(t *testing.T) {
 	})
 }
 
-func TestSQLiteQuotasRoundTrip_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "quotas.db")
+func TestSQLite_QuotasRoundTrip_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "quotas.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
@@ -60,8 +59,8 @@ func TestSQLiteQuotasRoundTrip_Good(t *testing.T) {
 	}
 }
 
-func TestSQLiteQuotasUpsert_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "upsert.db")
+func TestSQLite_QuotasOverwrite_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "overwrite.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
@@ -71,7 +70,7 @@ func TestSQLiteQuotasUpsert_Good(t *testing.T) {
 		"model-a": {MaxRPM: 100, MaxTPM: 50000, MaxRPD: 1000},
 	}))
 
-	// Upsert with updated values.
+	// Save a second snapshot with updated values.
 	require.NoError(t, store.saveQuotas(map[string]ModelQuota{
 		"model-a": {MaxRPM: 999, MaxTPM: 888, MaxRPD: 777},
 	}))
@@ -85,8 +84,8 @@ func TestSQLiteQuotasUpsert_Good(t *testing.T) {
 	assert.Equal(t, 777, q.MaxRPD, "should have updated RPD")
 }
 
-func TestSQLiteStateRoundTrip_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "state.db")
+func TestSQLite_StateRoundTrip_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "state.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
@@ -144,8 +143,8 @@ func TestSQLiteStateRoundTrip_Good(t *testing.T) {
 	}
 }
 
-func TestSQLiteStateOverwrite_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "overwrite.db")
+func TestSQLite_StateOverwrite_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "overwrite.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
@@ -182,8 +181,8 @@ func TestSQLiteStateOverwrite_Good(t *testing.T) {
 	assert.Len(t, b.Requests, 1)
 }
 
-func TestSQLiteEmptyState_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "empty.db")
+func TestSQLite_EmptyState_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "empty.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
@@ -198,8 +197,8 @@ func TestSQLiteEmptyState_Good(t *testing.T) {
 	assert.Empty(t, state, "should return empty state from fresh DB")
 }
 
-func TestSQLiteClose_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "close.db")
+func TestSQLite_Close_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "close.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 
@@ -208,8 +207,8 @@ func TestSQLiteClose_Good(t *testing.T) {
 
 // --- Phase 2: SQLite integration tests ---
 
-func TestNewWithSQLite_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "limiter.db")
+func TestSQLite_NewWithSQLite_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "limiter.db")
 	rl, err := NewWithSQLite(dbPath)
 	require.NoError(t, err)
 	defer rl.Close()
@@ -222,8 +221,8 @@ func TestNewWithSQLite_Good(t *testing.T) {
 	assert.NotNil(t, rl.sqlite, "SQLite store should be initialised")
 }
 
-func TestNewWithSQLiteConfig_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "config.db")
+func TestSQLite_NewWithSQLiteConfig_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "config.db")
 	rl, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderAnthropic},
 		Quotas: map[string]ModelQuota{
@@ -243,8 +242,8 @@ func TestNewWithSQLiteConfig_Good(t *testing.T) {
 	assert.False(t, hasGemini, "should not have Gemini models")
 }
 
-func TestSQLitePersistAndLoad_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "persist.db")
+func TestSQLite_PersistAndLoad_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "persist.db")
 	rl, err := NewWithSQLite(dbPath)
 	require.NoError(t, err)
 
@@ -272,8 +271,8 @@ func TestSQLitePersistAndLoad_Good(t *testing.T) {
 	assert.Equal(t, 500, stats.MaxRPD)
 }
 
-func TestSQLitePersistMultipleModels_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "multi.db")
+func TestSQLite_PersistMultipleModels_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "multi.db")
 	rl, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini, ProviderAnthropic},
 	})
@@ -302,8 +301,8 @@ func TestSQLitePersistMultipleModels_Good(t *testing.T) {
 	assert.Equal(t, 400, claude.TPM)
 }
 
-func TestSQLiteRecordUsageThenPersistReload_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "record.db")
+func TestSQLite_RecordUsageThenPersistReload_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "record.db")
 	rl, err := NewWithSQLite(dbPath)
 	require.NoError(t, err)
 
@@ -340,7 +339,7 @@ func TestSQLiteRecordUsageThenPersistReload_Good(t *testing.T) {
 	assert.Equal(t, 1000, stats2.TPM, "TPM should survive reload")
 }
 
-func TestSQLiteClose_Good_NoOp(t *testing.T) {
+func TestSQLite_CloseNoOp_Good(t *testing.T) {
 	// Close on YAML-backed limiter is a no-op.
 	rl := newTestLimiter(t)
 	assert.NoError(t, rl.Close(), "Close on YAML limiter should be no-op")
@@ -348,8 +347,8 @@ func TestSQLiteClose_Good_NoOp(t *testing.T) {
 
 // --- Phase 2: Concurrent SQLite ---
 
-func TestSQLiteConcurrent_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "concurrent.db")
+func TestSQLite_Concurrent_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "concurrent.db")
 	rl, err := NewWithSQLite(dbPath)
 	require.NoError(t, err)
 	defer rl.Close()
@@ -398,10 +397,10 @@ func TestSQLiteConcurrent_Good(t *testing.T) {
 
 // --- Phase 2: YAML backward compatibility ---
 
-func TestYAMLBackwardCompat_Good(t *testing.T) {
+func TestSQLite_YAMLBackwardCompat_Good(t *testing.T) {
 	// Verify that the default YAML backend still works after SQLite additions.
 	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "compat.yaml")
+	path := testPath(tmpDir, "compat.yaml")
 
 	rl1, err := New()
 	require.NoError(t, err)
@@ -425,22 +424,59 @@ func TestYAMLBackwardCompat_Good(t *testing.T) {
 	assert.Equal(t, 200, stats.TPM)
 }
 
-func TestConfigBackendDefault_Good(t *testing.T) {
+func TestSQLite_ConfigBackendDefault_Good(t *testing.T) {
 	// Empty Backend string should default to YAML behaviour.
 	rl, err := NewWithConfig(Config{
-		FilePath: filepath.Join(t.TempDir(), "default.yaml"),
+		FilePath: testPath(t.TempDir(), "default.yaml"),
 	})
 	require.NoError(t, err)
 
 	assert.Nil(t, rl.sqlite, "empty backend should use YAML (no sqlite)")
 }
 
+func TestSQLite_ConfigBackendSQLite_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "config-backend.db")
+	rl, err := NewWithConfig(Config{
+		Backend:  backendSQLite,
+		FilePath: dbPath,
+		Quotas: map[string]ModelQuota{
+			"backend-model": {MaxRPM: 10, MaxTPM: 1000, MaxRPD: 50},
+		},
+	})
+	require.NoError(t, err)
+	defer rl.Close()
+
+	require.NotNil(t, rl.sqlite)
+	rl.RecordUsage("backend-model", 10, 10)
+	require.NoError(t, rl.Persist())
+
+	assert.True(t, pathExists(dbPath), "sqlite backend should persist to the configured DB path")
+}
+
+func TestSQLite_ConfigBackendSQLiteDefaultPath_Good(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("home", "")
+
+	rl, err := NewWithConfig(Config{
+		Backend: backendSQLite,
+	})
+	require.NoError(t, err)
+	defer rl.Close()
+
+	require.NotNil(t, rl.sqlite)
+	require.NoError(t, rl.Persist())
+
+	assert.True(t, pathExists(testPath(home, defaultStateDirName, defaultSQLiteStateFile)), "sqlite backend should use the default home DB path")
+}
+
 // --- Phase 2: MigrateYAMLToSQLite ---
 
-func TestMigrateYAMLToSQLite_Good(t *testing.T) {
+func TestSQLite_MigrateYAMLToSQLite_Good(t *testing.T) {
 	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "state.yaml")
-	sqlitePath := filepath.Join(tmpDir, "migrated.db")
+	yamlPath := testPath(tmpDir, "state.yaml")
+	sqlitePath := testPath(tmpDir, "migrated.db")
 
 	// Create a YAML-backed limiter with state.
 	rl, err := New()
@@ -476,26 +512,89 @@ func TestMigrateYAMLToSQLite_Good(t *testing.T) {
 	assert.Equal(t, 2, stats.RPD, "should have 2 daily requests")
 }
 
-func TestMigrateYAMLToSQLite_Bad(t *testing.T) {
+func TestSQLite_MigrateYAMLToSQLite_Bad(t *testing.T) {
 	t.Run("non-existent YAML file", func(t *testing.T) {
-		err := MigrateYAMLToSQLite("/nonexistent/state.yaml", filepath.Join(t.TempDir(), "out.db"))
+		err := MigrateYAMLToSQLite("/nonexistent/state.yaml", testPath(t.TempDir(), "out.db"))
 		assert.Error(t, err, "should fail with non-existent YAML file")
 	})
 
 	t.Run("corrupt YAML file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "corrupt.yaml")
-		require.NoError(t, os.WriteFile(yamlPath, []byte("{{{{not yaml!"), 0644))
+		yamlPath := testPath(tmpDir, "corrupt.yaml")
+		writeTestFile(t, yamlPath, "{{{{not yaml!")
 
-		err := MigrateYAMLToSQLite(yamlPath, filepath.Join(tmpDir, "out.db"))
+		err := MigrateYAMLToSQLite(yamlPath, testPath(tmpDir, "out.db"))
 		assert.Error(t, err, "should fail with corrupt YAML")
 	})
 }
 
-func TestMigrateYAMLToSQLitePreservesAllGeminiModels_Good(t *testing.T) {
+func TestSQLite_MigrateYAMLToSQLiteAtomic_Good(t *testing.T) {
 	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "full.yaml")
-	sqlitePath := filepath.Join(tmpDir, "full.db")
+	yamlPath := testPath(tmpDir, "atomic.yaml")
+	sqlitePath := testPath(tmpDir, "atomic.db")
+	now := time.Now().UTC()
+
+	store, err := newSQLiteStore(sqlitePath)
+	require.NoError(t, err)
+
+	originalQuotas := map[string]ModelQuota{
+		"old-model": {MaxRPM: 1, MaxTPM: 2, MaxRPD: 3},
+	}
+	originalState := map[string]*UsageStats{
+		"old-model": {
+			Requests: []time.Time{now},
+			Tokens:   []TokenEntry{{Time: now, Count: 9}},
+			DayStart: now,
+			DayCount: 1,
+		},
+	}
+	require.NoError(t, store.saveSnapshot(originalQuotas, originalState))
+
+	_, err = store.db.Exec(`CREATE TRIGGER fail_daily_migrate BEFORE INSERT ON daily
+		BEGIN SELECT RAISE(ABORT, 'forced daily failure'); END`)
+	require.NoError(t, err)
+	require.NoError(t, store.close())
+
+	migrated := &RateLimiter{
+		Quotas: map[string]ModelQuota{
+			"new-model": {MaxRPM: 10, MaxTPM: 20, MaxRPD: 30},
+		},
+		State: map[string]*UsageStats{
+			"new-model": {
+				Requests: []time.Time{now.Add(5 * time.Second)},
+				Tokens:   []TokenEntry{{Time: now.Add(5 * time.Second), Count: 99}},
+				DayStart: now.Add(5 * time.Second),
+				DayCount: 2,
+			},
+		},
+	}
+	data, err := yaml.Marshal(migrated)
+	require.NoError(t, err)
+	writeTestFile(t, yamlPath, string(data))
+
+	err = MigrateYAMLToSQLite(yamlPath, sqlitePath)
+	require.Error(t, err)
+
+	store, err = newSQLiteStore(sqlitePath)
+	require.NoError(t, err)
+	defer store.close()
+
+	quotas, err := store.loadQuotas()
+	require.NoError(t, err)
+	assert.Equal(t, originalQuotas, quotas)
+
+	state, err := store.loadState()
+	require.NoError(t, err)
+	require.Contains(t, state, "old-model")
+	assert.Equal(t, originalState["old-model"].DayCount, state["old-model"].DayCount)
+	assert.Equal(t, originalState["old-model"].Tokens[0].Count, state["old-model"].Tokens[0].Count)
+	assert.NotContains(t, state, "new-model")
+}
+
+func TestSQLite_MigrateYAMLToSQLitePreservesAllGeminiModels_Good(t *testing.T) {
+	tmpDir := t.TempDir()
+	yamlPath := testPath(tmpDir, "full.yaml")
+	sqlitePath := testPath(tmpDir, "full.db")
 
 	// Create a full YAML state with all Gemini models.
 	rl, err := New()
@@ -524,12 +623,12 @@ func TestMigrateYAMLToSQLitePreservesAllGeminiModels_Good(t *testing.T) {
 
 // --- Phase 2: Corrupt DB recovery ---
 
-func TestSQLiteCorruptDB_Ugly(t *testing.T) {
+func TestSQLite_CorruptDB_Ugly(t *testing.T) {
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "corrupt.db")
+	dbPath := testPath(tmpDir, "corrupt.db")
 
 	// Write garbage to the DB file.
-	require.NoError(t, os.WriteFile(dbPath, []byte("THIS IS NOT A SQLITE DATABASE"), 0644))
+	writeTestFile(t, dbPath, "THIS IS NOT A SQLITE DATABASE")
 
 	// Opening a corrupt DB may succeed (sqlite is lazy about validation),
 	// but operations on it should fail gracefully.
@@ -546,9 +645,9 @@ func TestSQLiteCorruptDB_Ugly(t *testing.T) {
 	assert.Error(t, err, "loading from corrupt DB should return an error")
 }
 
-func TestSQLiteTruncatedDB_Ugly(t *testing.T) {
+func TestSQLite_TruncatedDB_Ugly(t *testing.T) {
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "truncated.db")
+	dbPath := testPath(tmpDir, "truncated.db")
 
 	// Create a valid DB first.
 	store, err := newSQLiteStore(dbPath)
@@ -559,11 +658,7 @@ func TestSQLiteTruncatedDB_Ugly(t *testing.T) {
 	require.NoError(t, store.close())
 
 	// Truncate the file to simulate corruption.
-	f, err := os.OpenFile(dbPath, os.O_WRONLY|os.O_TRUNC, 0644)
-	require.NoError(t, err)
-	_, err = f.Write([]byte("TRUNC"))
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
+	overwriteTestFile(t, dbPath, "TRUNC")
 
 	// Opening should either fail or operations should fail.
 	store2, err := newSQLiteStore(dbPath)
@@ -577,9 +672,9 @@ func TestSQLiteTruncatedDB_Ugly(t *testing.T) {
 	assert.Error(t, err, "loading from truncated DB should return an error")
 }
 
-func TestSQLiteEmptyModelState_Good(t *testing.T) {
+func TestSQLite_EmptyModelState_Good(t *testing.T) {
 	// State with no requests or tokens but with a daily counter.
-	dbPath := filepath.Join(t.TempDir(), "empty-state.db")
+	dbPath := testPath(t.TempDir(), "empty-state.db")
 	store, err := newSQLiteStore(dbPath)
 	require.NoError(t, err)
 	defer store.close()
@@ -606,8 +701,8 @@ func TestSQLiteEmptyModelState_Good(t *testing.T) {
 
 // --- Phase 2: End-to-end with persist cycle ---
 
-func TestSQLiteEndToEnd_Good(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "e2e.db")
+func TestSQLite_EndToEnd_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "e2e.db")
 
 	// Session 1: Create limiter, record usage, persist.
 	rl1, err := NewWithSQLiteConfig(dbPath, Config{
@@ -650,10 +745,82 @@ func TestSQLiteEndToEnd_Good(t *testing.T) {
 	assert.Equal(t, 5, custom.MaxRPM)
 }
 
+func TestSQLite_LoadReplacesPersistedSnapshot_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "replace.db")
+	rl, err := NewWithSQLiteConfig(dbPath, Config{
+		Quotas: map[string]ModelQuota{
+			"model-a": {MaxRPM: 1, MaxTPM: 100, MaxRPD: 10},
+		},
+	})
+	require.NoError(t, err)
+
+	rl.RecordUsage("model-a", 10, 10)
+	require.NoError(t, rl.Persist())
+
+	delete(rl.Quotas, "model-a")
+	rl.Quotas["model-b"] = ModelQuota{MaxRPM: 2, MaxTPM: 200, MaxRPD: 20}
+	rl.Reset("")
+	rl.RecordUsage("model-b", 5, 5)
+	require.NoError(t, rl.Persist())
+	require.NoError(t, rl.Close())
+
+	rl2, err := NewWithSQLiteConfig(dbPath, Config{
+		Providers: []Provider{ProviderGemini},
+	})
+	require.NoError(t, err)
+	defer rl2.Close()
+
+	rl2.State["stale-memory"] = &UsageStats{DayStart: time.Now(), DayCount: 99}
+	require.NoError(t, rl2.Load())
+
+	assert.NotContains(t, rl2.Quotas, "gemini-3-pro-preview")
+	assert.NotContains(t, rl2.Quotas, "model-a")
+	assert.Contains(t, rl2.Quotas, "model-b")
+	assert.NotContains(t, rl2.State, "stale-memory")
+	assert.NotContains(t, rl2.State, "model-a")
+	assert.Equal(t, 1, rl2.Stats("model-b").RPD)
+}
+
+func TestSQLite_PersistAtomic_Good(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "persist-atomic.db")
+	rl, err := NewWithSQLiteConfig(dbPath, Config{
+		Quotas: map[string]ModelQuota{
+			"old-model": {MaxRPM: 1, MaxTPM: 100, MaxRPD: 10},
+		},
+	})
+	require.NoError(t, err)
+
+	rl.RecordUsage("old-model", 10, 10)
+	require.NoError(t, rl.Persist())
+
+	_, err = rl.sqlite.db.Exec(`CREATE TRIGGER fail_daily_persist BEFORE INSERT ON daily
+		BEGIN SELECT RAISE(ABORT, 'forced daily failure'); END`)
+	require.NoError(t, err)
+
+	delete(rl.Quotas, "old-model")
+	rl.Quotas["new-model"] = ModelQuota{MaxRPM: 2, MaxTPM: 200, MaxRPD: 20}
+	rl.Reset("")
+	rl.RecordUsage("new-model", 50, 50)
+
+	err = rl.Persist()
+	require.Error(t, err)
+	require.NoError(t, rl.Close())
+
+	rl2, err := NewWithSQLiteConfig(dbPath, Config{})
+	require.NoError(t, err)
+	defer rl2.Close()
+	require.NoError(t, rl2.Load())
+
+	assert.Contains(t, rl2.Quotas, "old-model")
+	assert.NotContains(t, rl2.Quotas, "new-model")
+	assert.Equal(t, 1, rl2.Stats("old-model").RPD)
+	assert.Equal(t, 0, rl2.Stats("new-model").RPD)
+}
+
 // --- Phase 2: Benchmark ---
 
 func BenchmarkSQLitePersist(b *testing.B) {
-	dbPath := filepath.Join(b.TempDir(), "bench.db")
+	dbPath := testPath(b.TempDir(), "bench.db")
 	rl, err := NewWithSQLite(dbPath)
 	if err != nil {
 		b.Fatal(err)
@@ -678,7 +845,7 @@ func BenchmarkSQLitePersist(b *testing.B) {
 }
 
 func BenchmarkSQLiteLoad(b *testing.B) {
-	dbPath := filepath.Join(b.TempDir(), "bench-load.db")
+	dbPath := testPath(b.TempDir(), "bench-load.db")
 	rl, err := NewWithSQLite(dbPath)
 	if err != nil {
 		b.Fatal(err)
@@ -709,10 +876,10 @@ func BenchmarkSQLiteLoad(b *testing.B) {
 
 // TestMigrateYAMLToSQLiteWithFullState tests migration of a realistic YAML
 // file that contains the full serialised RateLimiter struct.
-func TestMigrateYAMLToSQLiteWithFullState_Good(t *testing.T) {
+func TestSQLite_MigrateYAMLToSQLiteWithFullState_Good(t *testing.T) {
 	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "realistic.yaml")
-	sqlitePath := filepath.Join(tmpDir, "realistic.db")
+	yamlPath := testPath(tmpDir, "realistic.yaml")
+	sqlitePath := testPath(tmpDir, "realistic.db")
 
 	now := time.Now()
 
@@ -745,7 +912,7 @@ func TestMigrateYAMLToSQLiteWithFullState_Good(t *testing.T) {
 
 	data, err := yaml.Marshal(rl)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(yamlPath, data, 0644))
+	writeTestFile(t, yamlPath, string(data))
 
 	// Migrate.
 	require.NoError(t, MigrateYAMLToSQLite(yamlPath, sqlitePath))

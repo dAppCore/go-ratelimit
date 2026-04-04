@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: EUPL-1.2
+
 package ratelimit
 
 import (
@@ -10,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIterators(t *testing.T) {
+func TestIter_Iterators_Good(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Quotas: map[string]ModelQuota{
 			"model-c": {MaxRPM: 10},
@@ -31,13 +33,19 @@ func TestIterators(t *testing.T) {
 		assert.Contains(t, models, "model-a")
 		assert.Contains(t, models, "model-b")
 		assert.Contains(t, models, "model-c")
-		
+
 		// Check sorting of our specific models
 		foundA, foundB, foundC := -1, -1, -1
 		for i, m := range models {
-			if m == "model-a" { foundA = i }
-			if m == "model-b" { foundB = i }
-			if m == "model-c" { foundC = i }
+			if m == "model-a" {
+				foundA = i
+			}
+			if m == "model-b" {
+				foundB = i
+			}
+			if m == "model-c" {
+				foundC = i
+			}
 		}
 		assert.True(t, foundA < foundB && foundB < foundC, "models should be sorted: a < b < c")
 	})
@@ -57,15 +65,21 @@ func TestIterators(t *testing.T) {
 		// Check sorting
 		foundA, foundB, foundC := -1, -1, -1
 		for i, m := range models {
-			if m == "model-a" { foundA = i }
-			if m == "model-b" { foundB = i }
-			if m == "model-c" { foundC = i }
+			if m == "model-a" {
+				foundA = i
+			}
+			if m == "model-b" {
+				foundB = i
+			}
+			if m == "model-c" {
+				foundC = i
+			}
 		}
 		assert.True(t, foundA < foundB && foundB < foundC, "iter should be sorted: a < b < c")
 	})
 }
 
-func TestIterEarlyBreak(t *testing.T) {
+func TestIter_IterEarlyBreak_Good(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Quotas: map[string]ModelQuota{
 			"model-a": {MaxRPM: 10},
@@ -98,10 +112,9 @@ func TestIterEarlyBreak(t *testing.T) {
 	})
 }
 
-func TestCountTokensFull(t *testing.T) {
-	t.Run("invalid URL/network error", func(t *testing.T) {
-		// Using an invalid character in model name to trigger URL error or similar
-		_, err := CountTokens(context.Background(), "key", "invalid model", "text")
+func TestIter_CountTokensFull_Ugly(t *testing.T) {
+	t.Run("empty model is rejected", func(t *testing.T) {
+		_, err := CountTokens(context.Background(), "key", "", "text")
 		assert.Error(t, err)
 	})
 
@@ -112,15 +125,15 @@ func TestCountTokensFull(t *testing.T) {
 		}))
 		defer server.Close()
 
-		// We can't easily override the URL in CountTokens without changing the code,
-		// but we can test the logic if we make it slightly more testable.
-		// For now, I've already updated ratelimit_test.go with some of this.
+		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "key", "model", "text")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "status 400")
 	})
 
 	t.Run("context cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := CountTokens(ctx, "key", "model", "text")
+		_, err := countTokensWithClient(ctx, http.DefaultClient, "https://generativelanguage.googleapis.com", "key", "model", "text")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "do request")
 	})

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 ---
 title: Architecture
 description: Internals of go-ratelimit -- sliding window algorithm, provider quota system, persistence backends, and concurrency model.
@@ -10,7 +12,7 @@ three independent quota dimensions per model -- requests per minute (RPM), token
 per minute (TPM), and requests per day (RPD) -- using an in-memory sliding window
 that can be persisted across process restarts via YAML or SQLite.
 
-Module path: `forge.lthn.ai/core/go-ratelimit`
+Module path: `dappco.re/go/core/go-ratelimit`
 
 ---
 
@@ -116,6 +118,12 @@ check short-circuits before touching any state.
 The check order is: RPD, then RPM, then TPM. RPD is checked first because it
 is the cheapest comparison (a single integer). TPM is checked last because it
 requires summing the token counts in the sliding window.
+
+`Decide()` follows the same path as `CanSend()` but returns a structured
+`Decision` containing a machine-readable code, reason, `RetryAfter` guidance,
+and a `ModelStats` snapshot. It is agent-facing and does not record usage;
+`WaitForCapacity()` consumes its `RetryAfter` hint to avoid unnecessary
+one-second polling when limits are saturated.
 
 ### Daily Reset
 
@@ -252,7 +260,7 @@ state:
     day_count: 42
 ```
 
-`Persist()` creates parent directories with `os.MkdirAll` before writing.
+`Persist()` creates parent directories with the `core.Fs` helper before writing.
 `Load()` treats a missing file as an empty state (no error). Corrupt or
 unreadable files return an error.
 
@@ -317,8 +325,8 @@ precision and allows efficient range queries using the composite indices.
 
 ### Save Strategy
 
-- **Quotas**: `INSERT ... ON CONFLICT(model) DO UPDATE` (upsert). Existing quota
-  rows are updated in place without deleting unrelated models.
+- **Quotas**: full snapshot replace inside a single transaction. `saveQuotas()`
+  clears the table and reinserts the current quota map.
 - **State**: Delete-then-insert inside a single transaction. All three state
   tables (`requests`, `tokens`, `daily`) are truncated and rewritten atomically.
 

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -6,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Provider-agnostic sliding window rate limiter for LLM API calls. Single Go package (no sub-packages) with two persistence backends: YAML (single-process, default) and SQLite (multi-process, WAL mode). Enforces RPM, TPM, and RPD quotas per model. Ships default profiles for Gemini, OpenAI, Anthropic, and Local providers.
 
-Module: `forge.lthn.ai/core/go-ratelimit` — Go 1.26, no CGO required.
+Module: `dappco.re/go/core/go-ratelimit` — Go 1.26, no CGO required.
 
 ## Commands
 
@@ -28,7 +30,7 @@ Pre-commit gate: `go test -race ./...` and `go vet ./...` must both pass.
 - **Conventional commits**: `type(scope): description` — scopes: `ratelimit`, `sqlite`, `persist`, `config`
 - **Co-Author line** on every commit: `Co-Authored-By: Virgil <virgil@lethean.io>`
 - **Coverage** must not drop below 95%
-- **Error format**: `coreerr.E("ratelimit.FunctionName", "what", err)` via `go-log` — lowercase, no trailing punctuation
+- **Error format**: `core.E("ratelimit.FunctionName", "what", err)` via `dappco.re/go/core` — lowercase, no trailing punctuation
 - **No `init()` functions**, no global mutable state
 - **Mutex discipline**: lock at the top of public methods, never inside helpers. Helpers that need the lock document "Caller must hold the lock". `prune()` mutates state, so even "read-only" methods that call it take the write lock. Never call a public method from another public method while holding the lock.
 
@@ -60,10 +62,9 @@ SQLite tests use `_Good`/`_Bad`/`_Ugly` suffixes (happy path / expected errors /
 
 ## Dependencies
 
-Five direct dependencies — do not add more without justification:
+Four direct dependencies — do not add more without justification:
 
-- `forge.lthn.ai/core/go-io` — file I/O abstraction
-- `forge.lthn.ai/core/go-log` — structured error handling (`coreerr.E`)
+- `dappco.re/go/core` — file I/O helpers, structured errors, JSON helpers, path/environment utilities
 - `gopkg.in/yaml.v3` — YAML backend
 - `modernc.org/sqlite` — pure Go SQLite (no CGO)
 - `github.com/stretchr/testify` — test-only

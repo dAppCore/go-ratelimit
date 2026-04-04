@@ -1,33 +1,113 @@
+// SPDX-License-Identifier: EUPL-1.2
+
 package ratelimit
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	core "dappco.re/go/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func testPath(parts ...string) string {
+	return core.Path(parts...)
+}
+
+func pathExists(path string) bool {
+	var fs core.Fs
+	return fs.Exists(path)
+}
+
+func writeTestFile(tb testing.TB, path, content string) {
+	tb.Helper()
+	require.NoError(tb, writeLocalFile(path, content))
+}
+
+func ensureTestDir(tb testing.TB, path string) {
+	tb.Helper()
+	require.NoError(tb, ensureDir(path))
+}
+
+func setPathMode(tb testing.TB, path string, mode uint32) {
+	tb.Helper()
+	require.NoError(tb, syscall.Chmod(path, mode))
+}
+
+func overwriteTestFile(tb testing.TB, path, content string) {
+	tb.Helper()
+
+	var fs core.Fs
+	writer := fs.Create(path)
+	require.NoError(tb, resultError(writer))
+	require.NoError(tb, resultError(core.WriteAll(writer.Value, content)))
+}
+
+func isRootUser() bool {
+	return syscall.Geteuid() == 0
+}
+
+func repeatString(part string, count int) string {
+	builder := core.NewBuilder()
+	for i := 0; i < count; i++ {
+		builder.WriteString(part)
+	}
+	return builder.String()
+}
+
+func substringCount(s, substr string) int {
+	if substr == "" {
+		return 0
+	}
+	return len(core.Split(s, substr)) - 1
+}
+
+func decodeJSONBody(tb testing.TB, r io.Reader, target any) {
+	tb.Helper()
+
+	data, err := io.ReadAll(r)
+	require.NoError(tb, err)
+	require.NoError(tb, resultError(core.JSONUnmarshal(data, target)))
+}
+
+func writeJSONBody(tb testing.TB, w io.Writer, value any) {
+	tb.Helper()
+
+	_, err := io.WriteString(w, core.JSONMarshalString(value))
+	require.NoError(tb, err)
+}
 
 // newTestLimiter returns a RateLimiter with file path set to a temp directory.
 func newTestLimiter(t *testing.T) *RateLimiter {
 	t.Helper()
 	rl, err := New()
 	require.NoError(t, err)
-	rl.filePath = filepath.Join(t.TempDir(), "ratelimits.yaml")
+	rl.filePath = testPath(t.TempDir(), "ratelimits.yaml")
 	return rl
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
 }
 
 // --- Phase 0: CanSend boundary conditions ---
 
-func TestCanSend(t *testing.T) {
+func TestRatelimit_CanSend_Good(t *testing.T) {
 	t.Run("fresh state allows send", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		model := "test-model"
@@ -162,11 +242,144 @@ func TestCanSend(t *testing.T) {
 		rl.RecordUsage(model, 50, 50) // exactly 100 tokens
 		assert.True(t, rl.CanSend(model, 0), "zero estimated tokens should fit even at limit")
 	})
+
+	t.Run("negative estimated tokens are rejected", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "negative-est"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 100, MaxRPD: 100}
+		rl.RecordUsage(model, 50, 50)
+
+		assert.False(t, rl.CanSend(model, -1), "negative estimated tokens should not bypass TPM limits")
+	})
+}
+
+// --- Phase 0: Decide surface area ---
+
+func TestRatelimit_Decide_Good(t *testing.T) {
+	t.Run("unknown model remains allowed with unknown code", func(t *testing.T) {
+		rl := newTestLimiter(t)
+
+		decision := rl.Decide("unknown-model", 50)
+
+		assert.True(t, decision.Allowed)
+		assert.Equal(t, DecisionUnknownModel, decision.Code)
+		assert.Zero(t, decision.RetryAfter)
+	})
+
+	t.Run("unlimited quota reports unlimited decision", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "unlimited"
+		rl.Quotas[model] = ModelQuota{}
+
+		decision := rl.Decide(model, 100)
+
+		assert.True(t, decision.Allowed)
+		assert.Equal(t, DecisionUnlimited, decision.Code)
+		assert.Equal(t, 0, decision.Stats.MaxRPM)
+		assert.Equal(t, 0, decision.Stats.MaxTPM)
+		assert.Equal(t, 0, decision.Stats.MaxRPD)
+	})
+
+	t.Run("rpd limit returns retry window", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "rpd-limit"
+		now := time.Now()
+		rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 1000, MaxRPD: 2}
+		rl.State[model] = &UsageStats{DayStart: now.Add(-23 * time.Hour), DayCount: 2}
+
+		decision := rl.Decide(model, 10)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionRPDLimit, decision.Code)
+		assert.InDelta(t, time.Hour.Seconds(), decision.RetryAfter.Seconds(), 2)
+		assert.Equal(t, 2, decision.Stats.MaxRPD)
+		assert.Equal(t, 2, decision.Stats.RPD)
+	})
+
+	t.Run("rpm limit includes retry-after estimate", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "rpm-limit"
+		now := time.Now()
+		rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 5}
+		rl.State[model] = &UsageStats{
+			Requests: []time.Time{now.Add(-10 * time.Second)},
+			Tokens:   []TokenEntry{{Time: now.Add(-10 * time.Second), Count: 10}},
+			DayStart: now,
+			DayCount: 1,
+		}
+
+		decision := rl.Decide(model, 5)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionRPMLimit, decision.Code)
+		assert.InDelta(t, 50, decision.RetryAfter.Seconds(), 1)
+	})
+
+	t.Run("tpm limit surfaces earliest expiry", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "tpm-limit"
+		now := time.Now()
+		rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+		rl.State[model] = &UsageStats{
+			Requests: []time.Time{now.Add(-30 * time.Second)},
+			Tokens: []TokenEntry{
+				{Time: now.Add(-50 * time.Second), Count: 70},
+				{Time: now.Add(-10 * time.Second), Count: 20},
+			},
+			DayStart: now,
+			DayCount: 2,
+		}
+
+		decision := rl.Decide(model, 20)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionTPMLimit, decision.Code)
+		assert.InDelta(t, 10, decision.RetryAfter.Seconds(), 1)
+	})
+
+	t.Run("allowed decision carries stats snapshot", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "decide-allowed"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 5, MaxTPM: 200, MaxRPD: 3}
+		now := time.Now()
+		rl.State[model] = &UsageStats{
+			Requests: []time.Time{now.Add(-5 * time.Second)},
+			Tokens:   []TokenEntry{{Time: now.Add(-5 * time.Second), Count: 30}},
+			DayStart: now,
+			DayCount: 1,
+		}
+
+		decision := rl.Decide(model, 20)
+
+		assert.True(t, decision.Allowed)
+		assert.Equal(t, DecisionAllowed, decision.Code)
+		assert.Equal(t, 1, decision.Stats.RPM)
+		assert.Equal(t, 30, decision.Stats.TPM)
+		assert.Equal(t, 1, decision.Stats.RPD)
+		assert.Equal(t, 5, decision.Stats.MaxRPM)
+		assert.Equal(t, 200, decision.Stats.MaxTPM)
+		assert.Equal(t, 3, decision.Stats.MaxRPD)
+	})
+
+	t.Run("negative estimate returns invalid decision", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "neg"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 5, MaxTPM: 50, MaxRPD: 5}
+
+		decision := rl.Decide(model, -5)
+
+		assert.False(t, decision.Allowed)
+		assert.Equal(t, DecisionInvalidTokens, decision.Code)
+		assert.Zero(t, decision.RetryAfter)
+		require.Contains(t, rl.State, model)
+		require.NotNil(t, rl.State[model])
+		assert.Equal(t, 0, rl.State[model].DayCount)
+	})
 }
 
 // --- Phase 0: Sliding window / prune tests ---
 
-func TestPrune(t *testing.T) {
+func TestRatelimit_Prune_Good(t *testing.T) {
 	t.Run("removes old entries", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		model := "test-prune"
@@ -281,7 +494,7 @@ func TestPrune(t *testing.T) {
 
 // --- Phase 0: RecordUsage ---
 
-func TestRecordUsage(t *testing.T) {
+func TestRatelimit_RecordUsage_Good(t *testing.T) {
 	t.Run("records into fresh state", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		model := "record-fresh"
@@ -335,11 +548,24 @@ func TestRecordUsage(t *testing.T) {
 		assert.Len(t, stats.Tokens, 2)
 		assert.Equal(t, 6, stats.DayCount)
 	})
+
+	t.Run("negative token inputs are clamped to zero", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "record-negative"
+
+		rl.RecordUsage(model, -100, 25)
+
+		stats := rl.State[model]
+		require.NotNil(t, stats)
+		assert.Len(t, stats.Requests, 1)
+		assert.Len(t, stats.Tokens, 1)
+		assert.Equal(t, 25, stats.Tokens[0].Count)
+	})
 }
 
 // --- Phase 0: Reset ---
 
-func TestReset(t *testing.T) {
+func TestRatelimit_Reset_Good(t *testing.T) {
 	t.Run("reset single model", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		rl.RecordUsage("model-a", 10, 10)
@@ -373,7 +599,7 @@ func TestReset(t *testing.T) {
 
 // --- Phase 0: WaitForCapacity ---
 
-func TestWaitForCapacity(t *testing.T) {
+func TestRatelimit_WaitForCapacity_Good(t *testing.T) {
 	t.Run("context cancelled returns error", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		model := "wait-cancel"
@@ -422,11 +648,63 @@ func TestWaitForCapacity(t *testing.T) {
 		err := rl.WaitForCapacity(ctx, model, 10)
 		assert.Error(t, err, "should return error for already-cancelled context")
 	})
+
+	t.Run("negative tokens return error", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		err := rl.WaitForCapacity(context.Background(), "wait-negative", -1)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "negative tokens")
+	})
+}
+
+func TestRatelimit_NilUsageStats_Ugly(t *testing.T) {
+	t.Run("CanSend replaces nil state without panicking", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "nil-cansend"
+		rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+		rl.State[model] = nil
+
+		assert.NotPanics(t, func() {
+			assert.True(t, rl.CanSend(model, 10))
+		})
+		assert.NotNil(t, rl.State[model])
+	})
+
+	t.Run("RecordUsage replaces nil state without panicking", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		model := "nil-record"
+		rl.State[model] = nil
+
+		assert.NotPanics(t, func() {
+			rl.RecordUsage(model, 10, 10)
+		})
+		require.NotNil(t, rl.State[model])
+		assert.Equal(t, 1, rl.State[model].DayCount)
+	})
+
+	t.Run("Stats and AllStats tolerate nil state entries", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		rl.Quotas["nil-stats"] = ModelQuota{MaxRPM: 1, MaxTPM: 2, MaxRPD: 3}
+		rl.State["nil-stats"] = nil
+		rl.State["nil-all-stats"] = nil
+
+		assert.NotPanics(t, func() {
+			stats := rl.Stats("nil-stats")
+			assert.Equal(t, 1, stats.MaxRPM)
+			assert.Equal(t, 0, stats.TPM)
+		})
+
+		assert.NotPanics(t, func() {
+			all := rl.AllStats()
+			assert.Contains(t, all, "nil-stats")
+			assert.Contains(t, all, "nil-all-stats")
+		})
+	})
 }
 
 // --- Phase 0: Stats ---
 
-func TestStats(t *testing.T) {
+func TestRatelimit_Stats_Good(t *testing.T) {
 	t.Run("returns stats for known model with usage", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		model := "stats-test"
@@ -466,7 +744,7 @@ func TestStats(t *testing.T) {
 
 // --- Phase 0: AllStats ---
 
-func TestAllStats(t *testing.T) {
+func TestRatelimit_AllStats_Good(t *testing.T) {
 	t.Run("includes all default quotas plus state-only models", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		rl.RecordUsage("gemini-3-pro-preview", 1000, 500)
@@ -524,10 +802,10 @@ func TestAllStats(t *testing.T) {
 
 // --- Phase 0: Persist and Load ---
 
-func TestPersistAndLoad(t *testing.T) {
+func TestRatelimit_PersistAndLoad_Ugly(t *testing.T) {
 	t.Run("round-trip preserves state", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		path := filepath.Join(tmpDir, "ratelimits.yaml")
+		path := testPath(tmpDir, "ratelimits.yaml")
 
 		rl1, err := New()
 		require.NoError(t, err)
@@ -550,7 +828,7 @@ func TestPersistAndLoad(t *testing.T) {
 
 	t.Run("load from non-existent file is not an error", func(t *testing.T) {
 		rl := newTestLimiter(t)
-		rl.filePath = filepath.Join(t.TempDir(), "does-not-exist.yaml")
+		rl.filePath = testPath(t.TempDir(), "does-not-exist.yaml")
 
 		err := rl.Load()
 		assert.NoError(t, err, "loading non-existent file should not error")
@@ -558,8 +836,8 @@ func TestPersistAndLoad(t *testing.T) {
 
 	t.Run("load from corrupt YAML returns error", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		path := filepath.Join(tmpDir, "corrupt.yaml")
-		require.NoError(t, os.WriteFile(path, []byte("{{{{invalid yaml!!!!"), 0644))
+		path := testPath(tmpDir, "corrupt.yaml")
+		writeTestFile(t, path, "{{{{invalid yaml!!!!")
 
 		rl := newTestLimiter(t)
 		rl.filePath = path
@@ -569,13 +847,13 @@ func TestPersistAndLoad(t *testing.T) {
 	})
 
 	t.Run("load from unreadable file returns error", func(t *testing.T) {
-		if os.Getuid() == 0 {
+		if isRootUser() {
 			t.Skip("chmod 000 does not restrict root")
 		}
 		tmpDir := t.TempDir()
-		path := filepath.Join(tmpDir, "unreadable.yaml")
-		require.NoError(t, os.WriteFile(path, []byte("quotas: {}"), 0644))
-		require.NoError(t, os.Chmod(path, 0000))
+		path := testPath(tmpDir, "unreadable.yaml")
+		writeTestFile(t, path, "quotas: {}")
+		setPathMode(t, path, 0o000)
 
 		rl := newTestLimiter(t)
 		rl.filePath = path
@@ -584,12 +862,12 @@ func TestPersistAndLoad(t *testing.T) {
 		assert.Error(t, err, "unreadable file should produce an error")
 
 		// Clean up permissions for temp dir cleanup
-		_ = os.Chmod(path, 0644)
+		_ = syscall.Chmod(path, 0o644)
 	})
 
 	t.Run("persist to nested non-existent directory creates it", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		path := filepath.Join(tmpDir, "nested", "deep", "ratelimits.yaml")
+		path := testPath(tmpDir, "nested", "deep", "ratelimits.yaml")
 
 		rl := newTestLimiter(t)
 		rl.filePath = path
@@ -598,32 +876,32 @@ func TestPersistAndLoad(t *testing.T) {
 		err := rl.Persist()
 		assert.NoError(t, err, "should create nested directories")
 
-		_, statErr := os.Stat(path)
-		assert.NoError(t, statErr, "file should exist")
+		assert.True(t, pathExists(path), "file should exist")
 	})
 
 	t.Run("persist to unwritable directory returns error", func(t *testing.T) {
-		if os.Getuid() == 0 {
+		if isRootUser() {
 			t.Skip("chmod 0555 does not restrict root")
 		}
 		tmpDir := t.TempDir()
-		unwritable := filepath.Join(tmpDir, "readonly")
-		require.NoError(t, os.MkdirAll(unwritable, 0555))
+		unwritable := testPath(tmpDir, "readonly")
+		ensureTestDir(t, unwritable)
+		setPathMode(t, unwritable, 0o555)
 
 		rl := newTestLimiter(t)
-		rl.filePath = filepath.Join(unwritable, "sub", "ratelimits.yaml")
+		rl.filePath = testPath(unwritable, "sub", "ratelimits.yaml")
 
 		err := rl.Persist()
 		assert.Error(t, err, "should fail when directory is unwritable")
 
 		// Clean up
-		_ = os.Chmod(unwritable, 0755)
+		_ = syscall.Chmod(unwritable, 0o755)
 	})
 }
 
 // --- Phase 0: Default quotas ---
 
-func TestDefaultQuotas(t *testing.T) {
+func TestRatelimit_DefaultQuotas_Good(t *testing.T) {
 	rl := newTestLimiter(t)
 
 	tests := []struct {
@@ -652,7 +930,7 @@ func TestDefaultQuotas(t *testing.T) {
 
 // --- Phase 0: Concurrent access (race test) ---
 
-func TestConcurrentAccess(t *testing.T) {
+func TestRatelimit_ConcurrentAccess_Good(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "concurrent-test"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 10000000, MaxRPD: 10000}
@@ -678,7 +956,7 @@ func TestConcurrentAccess(t *testing.T) {
 	assert.Equal(t, expected, stats.RPD, "all recordings should be counted")
 }
 
-func TestConcurrentResetAndRecord(t *testing.T) {
+func TestRatelimit_ConcurrentResetAndRecord_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "concurrent-reset"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 10000, MaxTPM: 100000000, MaxRPD: 100000}
@@ -716,7 +994,7 @@ func TestConcurrentResetAndRecord(t *testing.T) {
 	// No assertion needed -- if we get here without -race flagging, mutex is sound
 }
 
-func TestBackgroundPrune(t *testing.T) {
+func TestRatelimit_BackgroundPrune_Good(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "prune-me"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 100}
@@ -738,36 +1016,172 @@ func TestBackgroundPrune(t *testing.T) {
 		_, exists := rl.State[model]
 		return !exists
 	}, 1*time.Second, 20*time.Millisecond, "old empty state should be pruned")
+
+	t.Run("non-positive interval is a safe no-op", func(t *testing.T) {
+		rl := newTestLimiter(t)
+		rl.State["still-here"] = &UsageStats{
+			Requests: []time.Time{time.Now().Add(-2 * time.Minute)},
+		}
+
+		assert.NotPanics(t, func() {
+			stop := rl.BackgroundPrune(0)
+			stop()
+		})
+		assert.Contains(t, rl.State, "still-here")
+	})
 }
 
 // --- Phase 0: CountTokens (with mock HTTP server) ---
 
-func TestCountTokens(t *testing.T) {
+func TestRatelimit_CountTokens_Ugly(t *testing.T) {
 	t.Run("successful token count", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 			assert.Equal(t, "test-api-key", r.Header.Get("x-goog-api-key"))
+			assert.Equal(t, "/v1beta/models/test-model:countTokens", r.URL.EscapedPath())
+
+			var body struct {
+				Contents []struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"contents"`
+			}
+			decodeJSONBody(t, r.Body, &body)
+			require.Len(t, body.Contents, 1)
+			require.Len(t, body.Contents[0].Parts, 1)
+			assert.Equal(t, "hello", body.Contents[0].Parts[0].Text)
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]int{"totalTokens": 42})
+			writeJSONBody(t, w, map[string]int{"totalTokens": 42})
 		}))
 		defer server.Close()
 
-		// For testing purposes, we would need to make the base URL configurable.
-		// Since we're just checking the signature and basic logic, we test the error paths.
+		tokens, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "test-api-key", "test-model", "hello")
+		require.NoError(t, err)
+		assert.Equal(t, 42, tokens)
 	})
 
-	t.Run("API error returns error", func(t *testing.T) {
+	t.Run("model name is path escaped", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/v1beta/models/folder%2Fmodel%3Fdebug=1:countTokens", r.URL.EscapedPath())
+			assert.Empty(t, r.URL.RawQuery)
+			w.Header().Set("Content-Type", "application/json")
+			writeJSONBody(t, w, map[string]int{"totalTokens": 7})
+		}))
+		defer server.Close()
+
+		tokens, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "test-api-key", "folder/model?debug=1", "hello")
+		require.NoError(t, err)
+		assert.Equal(t, 7, tokens)
+	})
+
+	t.Run("API error body is truncated", func(t *testing.T) {
+		largeBody := repeatString("x", countTokensErrorBodyLimit+256)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error": "invalid API key"}`)
+			_, err := io.WriteString(w, largeBody)
+			require.NoError(t, err)
 		}))
 		defer server.Close()
 
-		_, err := CountTokens(context.Background(), "fake-key", "test-model", "hello")
-		assert.Error(t, err, "should fail with invalid API endpoint")
+		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "api error status 401")
+		assert.True(t, substringCount(err.Error(), "x") < len(largeBody), "error body should be bounded")
+		assert.Contains(t, err.Error(), "...")
 	})
+
+	t.Run("empty model is rejected before request", func(t *testing.T) {
+		_, err := CountTokens(context.Background(), "fake-key", "", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build url")
+	})
+
+	t.Run("invalid base URL returns error", func(t *testing.T) {
+		_, err := countTokensWithClient(context.Background(), http.DefaultClient, "://bad-url", "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build url")
+	})
+
+	t.Run("base URL without host returns error", func(t *testing.T) {
+		_, err := countTokensWithClient(context.Background(), http.DefaultClient, "/relative", "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build url")
+	})
+
+	t.Run("invalid JSON response returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := w.Write([]byte(`{"totalTokens":`))
+			require.NoError(t, err)
+		}))
+		defer server.Close()
+
+		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode response")
+	})
+
+	t.Run("error body read failures are returned", func(t *testing.T) {
+		client := &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusBadGateway,
+					Body:       io.NopCloser(errReader{}),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		}
+
+		_, err := countTokensWithClient(context.Background(), client, "https://generativelanguage.googleapis.com", "fake-key", "test-model", "hello")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "read error body")
+	})
+
+	t.Run("nil client falls back to http.DefaultClient", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			writeJSONBody(t, w, map[string]int{"totalTokens": 11})
+		}))
+		defer server.Close()
+
+		originalClient := http.DefaultClient
+		http.DefaultClient = server.Client()
+		defer func() {
+			http.DefaultClient = originalClient
+		}()
+
+		tokens, err := countTokensWithClient(context.Background(), nil, server.URL, "fake-key", "test-model", "hello")
+		require.NoError(t, err)
+		assert.Equal(t, 11, tokens)
+	})
+}
+
+func TestRatelimit_PersistSkipsNilState_Good(t *testing.T) {
+	path := testPath(t.TempDir(), "nil-state.yaml")
+
+	rl, err := New()
+	require.NoError(t, err)
+	rl.filePath = path
+	rl.State["nil-model"] = nil
+
+	require.NoError(t, rl.Persist())
+
+	rl2, err := New()
+	require.NoError(t, err)
+	rl2.filePath = path
+	require.NoError(t, rl2.Load())
+	assert.NotContains(t, rl2.State, "nil-model")
+}
+
+func TestRatelimit_TokenTotals_Good(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+
+	assert.Equal(t, 25, safeTokenSum(-100, 25))
+	assert.Equal(t, maxInt, safeTokenSum(maxInt, 1))
+	assert.Equal(t, 10, totalTokenCount([]TokenEntry{{Count: -5}, {Count: 10}}))
 }
 
 // --- Phase 0: Benchmarks ---
@@ -832,7 +1246,7 @@ func BenchmarkCanSendConcurrent(b *testing.B) {
 
 // --- Phase 1: Provider profiles and NewWithConfig ---
 
-func TestDefaultProfiles(t *testing.T) {
+func TestRatelimit_DefaultProfiles_Good(t *testing.T) {
 	profiles := DefaultProfiles()
 
 	t.Run("contains all four providers", func(t *testing.T) {
@@ -873,10 +1287,10 @@ func TestDefaultProfiles(t *testing.T) {
 	})
 }
 
-func TestNewWithConfig(t *testing.T) {
+func TestRatelimit_NewWithConfig_Ugly(t *testing.T) {
 	t.Run("empty config defaults to Gemini", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
-			FilePath: filepath.Join(t.TempDir(), "test.yaml"),
+			FilePath: testPath(t.TempDir(), "test.yaml"),
 		})
 		require.NoError(t, err)
 
@@ -886,7 +1300,7 @@ func TestNewWithConfig(t *testing.T) {
 
 	t.Run("single provider loads only its models", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
-			FilePath:  filepath.Join(t.TempDir(), "test.yaml"),
+			FilePath:  testPath(t.TempDir(), "test.yaml"),
 			Providers: []Provider{ProviderOpenAI},
 		})
 		require.NoError(t, err)
@@ -900,7 +1314,7 @@ func TestNewWithConfig(t *testing.T) {
 
 	t.Run("multiple providers merge models", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
-			FilePath:  filepath.Join(t.TempDir(), "test.yaml"),
+			FilePath:  testPath(t.TempDir(), "test.yaml"),
 			Providers: []Provider{ProviderGemini, ProviderAnthropic},
 		})
 		require.NoError(t, err)
@@ -916,7 +1330,7 @@ func TestNewWithConfig(t *testing.T) {
 
 	t.Run("explicit quotas override provider defaults", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
-			FilePath:  filepath.Join(t.TempDir(), "test.yaml"),
+			FilePath:  testPath(t.TempDir(), "test.yaml"),
 			Providers: []Provider{ProviderGemini},
 			Quotas: map[string]ModelQuota{
 				"gemini-3-pro-preview": {MaxRPM: 999, MaxTPM: 888, MaxRPD: 777},
@@ -932,7 +1346,7 @@ func TestNewWithConfig(t *testing.T) {
 
 	t.Run("explicit quotas without providers", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
-			FilePath: filepath.Join(t.TempDir(), "test.yaml"),
+			FilePath: testPath(t.TempDir(), "test.yaml"),
 			Quotas: map[string]ModelQuota{
 				"my-custom-model": {MaxRPM: 10, MaxTPM: 1000, MaxRPD: 50},
 			},
@@ -945,7 +1359,7 @@ func TestNewWithConfig(t *testing.T) {
 	})
 
 	t.Run("custom file path is respected", func(t *testing.T) {
-		customPath := filepath.Join(t.TempDir(), "custom", "limits.yaml")
+		customPath := testPath(t.TempDir(), "custom", "limits.yaml")
 		rl, err := NewWithConfig(Config{
 			FilePath:  customPath,
 			Providers: []Provider{ProviderLocal},
@@ -955,13 +1369,12 @@ func TestNewWithConfig(t *testing.T) {
 		rl.RecordUsage("test", 1, 1)
 		require.NoError(t, rl.Persist())
 
-		_, statErr := os.Stat(customPath)
-		assert.NoError(t, statErr, "file should be created at custom path")
+		assert.True(t, pathExists(customPath), "file should be created at custom path")
 	})
 
 	t.Run("unknown provider is silently skipped", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
-			FilePath:  filepath.Join(t.TempDir(), "test.yaml"),
+			FilePath:  testPath(t.TempDir(), "test.yaml"),
 			Providers: []Provider{"nonexistent-provider"},
 		})
 		require.NoError(t, err)
@@ -970,7 +1383,7 @@ func TestNewWithConfig(t *testing.T) {
 
 	t.Run("local provider with custom quotas", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
-			FilePath:  filepath.Join(t.TempDir(), "test.yaml"),
+			FilePath:  testPath(t.TempDir(), "test.yaml"),
 			Providers: []Provider{ProviderLocal},
 			Quotas: map[string]ModelQuota{
 				"llama-3.3-70b": {MaxRPM: 5, MaxTPM: 50000, MaxRPD: 0},
@@ -983,9 +1396,28 @@ func TestNewWithConfig(t *testing.T) {
 		assert.Equal(t, 5, q.MaxRPM)
 		assert.Equal(t, 50000, q.MaxTPM)
 	})
+
+	t.Run("invalid backend returns error", func(t *testing.T) {
+		_, err := NewWithConfig(Config{
+			Backend: "bogus",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown backend")
+	})
+
+	t.Run("default YAML path uses home directory", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", "")
+		t.Setenv("home", "")
+
+		rl, err := NewWithConfig(Config{})
+		require.NoError(t, err)
+		assert.Equal(t, testPath(home, defaultStateDirName, defaultYAMLStateFile), rl.filePath)
+	})
 }
 
-func TestNewBackwardCompatibility(t *testing.T) {
+func TestRatelimit_NewBackwardCompatibility_Good(t *testing.T) {
 	// New() should produce the exact same result as before Phase 1
 	rl, err := New()
 	require.NoError(t, err)
@@ -1008,7 +1440,7 @@ func TestNewBackwardCompatibility(t *testing.T) {
 	}
 }
 
-func TestSetQuota(t *testing.T) {
+func TestRatelimit_SetQuota_Good(t *testing.T) {
 	t.Run("adds new model quota", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		rl.SetQuota("custom-model", ModelQuota{MaxRPM: 42, MaxTPM: 9999, MaxRPD: 100})
@@ -1036,7 +1468,7 @@ func TestSetQuota(t *testing.T) {
 			wg.Add(1)
 			go func(n int) {
 				defer wg.Done()
-				model := fmt.Sprintf("model-%d", n)
+				model := core.Sprintf("model-%d", n)
 				rl.SetQuota(model, ModelQuota{MaxRPM: n, MaxTPM: n * 100, MaxRPD: n * 10})
 			}(i)
 		}
@@ -1046,7 +1478,7 @@ func TestSetQuota(t *testing.T) {
 	})
 }
 
-func TestAddProvider(t *testing.T) {
+func TestRatelimit_AddProvider_Good(t *testing.T) {
 	t.Run("adds OpenAI models to existing limiter", func(t *testing.T) {
 		rl := newTestLimiter(t) // starts with Gemini defaults
 		geminiCount := len(rl.Quotas)
@@ -1108,7 +1540,7 @@ func TestAddProvider(t *testing.T) {
 	})
 }
 
-func TestProviderConstants(t *testing.T) {
+func TestRatelimit_ProviderConstants_Good(t *testing.T) {
 	// Verify the string values are stable (they may be used in YAML configs)
 	assert.Equal(t, Provider("gemini"), ProviderGemini)
 	assert.Equal(t, Provider("openai"), ProviderOpenAI)
@@ -1118,7 +1550,7 @@ func TestProviderConstants(t *testing.T) {
 
 // --- Phase 0 addendum: Additional concurrent and multi-model race tests ---
 
-func TestConcurrentMultipleModels(t *testing.T) {
+func TestRatelimit_ConcurrentMultipleModels_Good(t *testing.T) {
 	rl := newTestLimiter(t)
 	models := []string{"model-a", "model-b", "model-c", "model-d", "model-e"}
 	for _, m := range models {
@@ -1148,9 +1580,9 @@ func TestConcurrentMultipleModels(t *testing.T) {
 	}
 }
 
-func TestConcurrentPersistAndLoad(t *testing.T) {
+func TestRatelimit_ConcurrentPersistAndLoad_Ugly(t *testing.T) {
 	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "concurrent.yaml")
+	path := testPath(tmpDir, "concurrent.yaml")
 
 	rl := newTestLimiter(t)
 	rl.filePath = path
@@ -1182,7 +1614,7 @@ func TestConcurrentPersistAndLoad(t *testing.T) {
 	// No panics or data races = pass
 }
 
-func TestConcurrentAllStatsAndRecordUsage(t *testing.T) {
+func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Good(t *testing.T) {
 	rl := newTestLimiter(t)
 	models := []string{"stats-a", "stats-b", "stats-c"}
 	for _, m := range models {
@@ -1213,7 +1645,7 @@ func TestConcurrentAllStatsAndRecordUsage(t *testing.T) {
 	wg.Wait()
 }
 
-func TestConcurrentWaitForCapacityAndRecordUsage(t *testing.T) {
+func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Good(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "race-wait"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 10000000, MaxRPD: 10000}
@@ -1310,7 +1742,7 @@ func BenchmarkAllStats(b *testing.B) {
 
 func BenchmarkPersist(b *testing.B) {
 	tmpDir := b.TempDir()
-	path := filepath.Join(tmpDir, "bench.yaml")
+	path := testPath(tmpDir, "bench.yaml")
 
 	rl, _ := New()
 	rl.filePath = path
@@ -1331,10 +1763,10 @@ func BenchmarkPersist(b *testing.B) {
 	}
 }
 
-func TestEndToEndMultiProvider(t *testing.T) {
+func TestRatelimit_EndToEndMultiProvider_Good(t *testing.T) {
 	// Simulate a real-world scenario: limiter for both Gemini and Anthropic
 	rl, err := NewWithConfig(Config{
-		FilePath:  filepath.Join(t.TempDir(), "multi.yaml"),
+		FilePath:  testPath(t.TempDir(), "multi.yaml"),
 		Providers: []Provider{ProviderGemini, ProviderAnthropic},
 	})
 	require.NoError(t, err)

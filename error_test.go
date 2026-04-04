@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: EUPL-1.2
+
 package ratelimit
 
 import (
-	"os"
-	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSQLiteErrorPaths(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "error.db")
+func TestError_SQLiteErrorPaths_Bad(t *testing.T) {
+	dbPath := testPath(t.TempDir(), "error.db")
 	rl, err := NewWithSQLite(dbPath)
 	require.NoError(t, err)
 
@@ -39,17 +40,17 @@ func TestSQLiteErrorPaths(t *testing.T) {
 	})
 }
 
-func TestSQLiteInitErrors(t *testing.T) {
+func TestError_SQLiteInitErrors_Bad(t *testing.T) {
 	t.Run("WAL pragma failure", func(t *testing.T) {
 		// This is hard to trigger without mocking sql.DB, but we can try an invalid connection string
 		// modernc.org/sqlite doesn't support all DSN options that might cause PRAGMA to fail but connection to succeed.
 	})
 }
 
-func TestPersistYAML(t *testing.T) {
+func TestError_PersistYAML_Good(t *testing.T) {
 	t.Run("successful YAML persist and load", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		path := filepath.Join(tmpDir, "ratelimits.yaml")
+		path := testPath(tmpDir, "ratelimits.yaml")
 		rl, _ := New()
 		rl.filePath = path
 		rl.Quotas["test"] = ModelQuota{MaxRPM: 1}
@@ -65,9 +66,9 @@ func TestPersistYAML(t *testing.T) {
 	})
 }
 
-func TestSQLiteLoadViaLimiter(t *testing.T) {
+func TestError_SQLiteLoadViaLimiter_Bad(t *testing.T) {
 	t.Run("Load returns error when SQLite DB is closed", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "load-err.db")
+		dbPath := testPath(t.TempDir(), "load-err.db")
 		rl, err := NewWithSQLite(dbPath)
 		require.NoError(t, err)
 
@@ -79,7 +80,7 @@ func TestSQLiteLoadViaLimiter(t *testing.T) {
 	})
 
 	t.Run("Load returns error when loadState fails", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "load-state-err.db")
+		dbPath := testPath(t.TempDir(), "load-state-err.db")
 		rl, err := NewWithSQLite(dbPath)
 		require.NoError(t, err)
 
@@ -96,9 +97,9 @@ func TestSQLiteLoadViaLimiter(t *testing.T) {
 	})
 }
 
-func TestSQLitePersistViaLimiter(t *testing.T) {
+func TestError_SQLitePersistViaLimiter_Bad(t *testing.T) {
 	t.Run("Persist returns error when SQLite saveQuotas fails", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "persist-err.db")
+		dbPath := testPath(t.TempDir(), "persist-err.db")
 		rl, err := NewWithSQLite(dbPath)
 		require.NoError(t, err)
 
@@ -113,7 +114,7 @@ func TestSQLitePersistViaLimiter(t *testing.T) {
 	})
 
 	t.Run("Persist returns error when SQLite saveState fails", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "persist-state-err.db")
+		dbPath := testPath(t.TempDir(), "persist-state-err.db")
 		rl, err := NewWithSQLite(dbPath)
 		require.NoError(t, err)
 
@@ -130,7 +131,7 @@ func TestSQLitePersistViaLimiter(t *testing.T) {
 	})
 }
 
-func TestNewWithSQLiteErrors(t *testing.T) {
+func TestError_NewWithSQLite_Bad(t *testing.T) {
 	t.Run("NewWithSQLite with invalid path", func(t *testing.T) {
 		_, err := NewWithSQLite("/nonexistent/deep/nested/dir/test.db")
 		assert.Error(t, err, "should fail with invalid path")
@@ -144,9 +145,9 @@ func TestNewWithSQLiteErrors(t *testing.T) {
 	})
 }
 
-func TestSQLiteSaveStateErrors(t *testing.T) {
+func TestError_SQLiteSaveState_Bad(t *testing.T) {
 	t.Run("saveState fails when tokens table is dropped", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "tokens-err.db")
+		dbPath := testPath(t.TempDir(), "tokens-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -166,7 +167,7 @@ func TestSQLiteSaveStateErrors(t *testing.T) {
 	})
 
 	t.Run("saveState fails when daily table is dropped", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "daily-err.db")
+		dbPath := testPath(t.TempDir(), "daily-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -185,7 +186,7 @@ func TestSQLiteSaveStateErrors(t *testing.T) {
 	})
 
 	t.Run("saveState fails on request insert with renamed column", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "req-insert-err.db")
+		dbPath := testPath(t.TempDir(), "req-insert-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -206,7 +207,7 @@ func TestSQLiteSaveStateErrors(t *testing.T) {
 	})
 
 	t.Run("saveState fails on token insert with renamed column", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "tok-insert-err.db")
+		dbPath := testPath(t.TempDir(), "tok-insert-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -227,7 +228,7 @@ func TestSQLiteSaveStateErrors(t *testing.T) {
 	})
 
 	t.Run("saveState fails on daily insert with renamed column", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "day-insert-err.db")
+		dbPath := testPath(t.TempDir(), "day-insert-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -247,9 +248,9 @@ func TestSQLiteSaveStateErrors(t *testing.T) {
 	})
 }
 
-func TestSQLiteLoadStateErrors(t *testing.T) {
+func TestError_SQLiteLoadState_Bad(t *testing.T) {
 	t.Run("loadState fails when requests table is dropped", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "req-err.db")
+		dbPath := testPath(t.TempDir(), "req-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -271,7 +272,7 @@ func TestSQLiteLoadStateErrors(t *testing.T) {
 	})
 
 	t.Run("loadState fails when tokens table is dropped", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "tok-err.db")
+		dbPath := testPath(t.TempDir(), "tok-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -293,7 +294,7 @@ func TestSQLiteLoadStateErrors(t *testing.T) {
 	})
 
 	t.Run("loadState fails when daily table is dropped", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "daily-load-err.db")
+		dbPath := testPath(t.TempDir(), "daily-load-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -314,9 +315,9 @@ func TestSQLiteLoadStateErrors(t *testing.T) {
 	})
 }
 
-func TestSQLiteSaveQuotasExecError(t *testing.T) {
+func TestError_SQLiteSaveQuotasExec_Bad(t *testing.T) {
 	t.Run("saveQuotas fails with renamed column at prepare", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "quota-exec-err.db")
+		dbPath := testPath(t.TempDir(), "quota-exec-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -332,7 +333,7 @@ func TestSQLiteSaveQuotasExecError(t *testing.T) {
 	})
 
 	t.Run("saveQuotas fails at exec via trigger", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "quota-trigger.db")
+		dbPath := testPath(t.TempDir(), "quota-trigger.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -350,9 +351,9 @@ func TestSQLiteSaveQuotasExecError(t *testing.T) {
 	})
 }
 
-func TestSQLiteSaveStateExecErrors(t *testing.T) {
+func TestError_SQLiteSaveStateExec_Bad(t *testing.T) {
 	t.Run("request insert exec fails via trigger", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "trigger-req.db")
+		dbPath := testPath(t.TempDir(), "trigger-req.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -375,7 +376,7 @@ func TestSQLiteSaveStateExecErrors(t *testing.T) {
 	})
 
 	t.Run("token insert exec fails via trigger", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "trigger-tok.db")
+		dbPath := testPath(t.TempDir(), "trigger-tok.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -398,7 +399,7 @@ func TestSQLiteSaveStateExecErrors(t *testing.T) {
 	})
 
 	t.Run("daily insert exec fails via trigger", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "trigger-day.db")
+		dbPath := testPath(t.TempDir(), "trigger-day.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -420,9 +421,9 @@ func TestSQLiteSaveStateExecErrors(t *testing.T) {
 	})
 }
 
-func TestSQLiteLoadQuotasScanError(t *testing.T) {
+func TestError_SQLiteLoadQuotasScan_Bad(t *testing.T) {
 	t.Run("loadQuotas fails with renamed column", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "quota-scan-err.db")
+		dbPath := testPath(t.TempDir(), "quota-scan-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -441,26 +442,29 @@ func TestSQLiteLoadQuotasScanError(t *testing.T) {
 	})
 }
 
-func TestNewSQLiteStoreInReadOnlyDir(t *testing.T) {
-	if os.Getuid() == 0 {
+func TestError_NewSQLiteStoreInReadOnlyDir_Bad(t *testing.T) {
+	if isRootUser() {
 		t.Skip("chmod restrictions do not apply to root")
 	}
 
 	t.Run("fails when parent directory is read-only", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		readonlyDir := filepath.Join(tmpDir, "readonly")
-		require.NoError(t, os.MkdirAll(readonlyDir, 0555))
-		defer os.Chmod(readonlyDir, 0755)
+		readonlyDir := testPath(tmpDir, "readonly")
+		ensureTestDir(t, readonlyDir)
+		setPathMode(t, readonlyDir, 0o555)
+		defer func() {
+			_ = syscall.Chmod(readonlyDir, 0o755)
+		}()
 
-		dbPath := filepath.Join(readonlyDir, "test.db")
+		dbPath := testPath(readonlyDir, "test.db")
 		_, err := newSQLiteStore(dbPath)
 		assert.Error(t, err, "should fail when directory is read-only")
 	})
 }
 
-func TestSQLiteCreateSchemaError(t *testing.T) {
+func TestError_SQLiteCreateSchema_Bad(t *testing.T) {
 	t.Run("createSchema fails on closed DB", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "schema-err.db")
+		dbPath := testPath(t.TempDir(), "schema-err.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 
@@ -473,9 +477,9 @@ func TestSQLiteCreateSchemaError(t *testing.T) {
 	})
 }
 
-func TestSQLiteLoadStateScanErrors(t *testing.T) {
+func TestError_SQLiteLoadStateScan_Bad(t *testing.T) {
 	t.Run("scan daily fails with NULL values", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "scan-daily.db")
+		dbPath := testPath(t.TempDir(), "scan-daily.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -495,7 +499,7 @@ func TestSQLiteLoadStateScanErrors(t *testing.T) {
 	})
 
 	t.Run("scan requests fails with NULL ts", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "scan-req.db")
+		dbPath := testPath(t.TempDir(), "scan-req.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -520,7 +524,7 @@ func TestSQLiteLoadStateScanErrors(t *testing.T) {
 	})
 
 	t.Run("scan tokens fails with NULL values", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "scan-tok.db")
+		dbPath := testPath(t.TempDir(), "scan-tok.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -545,9 +549,9 @@ func TestSQLiteLoadStateScanErrors(t *testing.T) {
 	})
 }
 
-func TestSQLiteLoadQuotasScanWithBadSchema(t *testing.T) {
+func TestError_SQLiteLoadQuotasScanWithBadSchema_Bad(t *testing.T) {
 	t.Run("scan fails with NULL quota values", func(t *testing.T) {
-		dbPath := filepath.Join(t.TempDir(), "scan-quota.db")
+		dbPath := testPath(t.TempDir(), "scan-quota.db")
 		store, err := newSQLiteStore(dbPath)
 		require.NoError(t, err)
 		defer store.close()
@@ -566,11 +570,11 @@ func TestSQLiteLoadQuotasScanWithBadSchema(t *testing.T) {
 	})
 }
 
-func TestMigrateYAMLToSQLiteWithSaveErrors(t *testing.T) {
+func TestError_MigrateYAMLToSQLiteWithSaveErrors_Bad(t *testing.T) {
 	t.Run("saveQuotas failure during migration via trigger", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "with-quotas.yaml")
-		sqlitePath := filepath.Join(tmpDir, "migrate-quota-err.db")
+		yamlPath := testPath(tmpDir, "with-quotas.yaml")
+		sqlitePath := testPath(tmpDir, "migrate-quota-err.db")
 
 		// Write a YAML file with quotas.
 		yamlData := `quotas:
@@ -579,7 +583,7 @@ func TestMigrateYAMLToSQLiteWithSaveErrors(t *testing.T) {
     max_tpm: 100
     max_rpd: 50
 `
-		require.NoError(t, os.WriteFile(yamlPath, []byte(yamlData), 0644))
+		writeTestFile(t, yamlPath, yamlData)
 
 		// Pre-create DB with a trigger that aborts quota inserts.
 		store, err := newSQLiteStore(sqlitePath)
@@ -596,8 +600,8 @@ func TestMigrateYAMLToSQLiteWithSaveErrors(t *testing.T) {
 
 	t.Run("saveState failure during migration via trigger", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "with-state.yaml")
-		sqlitePath := filepath.Join(tmpDir, "migrate-state-err.db")
+		yamlPath := testPath(tmpDir, "with-state.yaml")
+		sqlitePath := testPath(tmpDir, "migrate-state-err.db")
 
 		// Write YAML with state.
 		yamlData := `state:
@@ -607,7 +611,7 @@ func TestMigrateYAMLToSQLiteWithSaveErrors(t *testing.T) {
     day_start: 2026-01-01T00:00:00Z
     day_count: 1
 `
-		require.NoError(t, os.WriteFile(yamlPath, []byte(yamlData), 0644))
+		writeTestFile(t, yamlPath, yamlData)
 
 		// Pre-create DB with a trigger that aborts daily inserts.
 		store, err := newSQLiteStore(sqlitePath)
@@ -622,13 +626,13 @@ func TestMigrateYAMLToSQLiteWithSaveErrors(t *testing.T) {
 	})
 }
 
-func TestMigrateYAMLToSQLiteNilQuotasAndState(t *testing.T) {
+func TestError_MigrateYAMLToSQLiteNilQuotasAndState_Good(t *testing.T) {
 	t.Run("YAML with empty quotas and state migrates cleanly", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "empty.yaml")
-		require.NoError(t, os.WriteFile(yamlPath, []byte("{}"), 0644))
+		yamlPath := testPath(tmpDir, "empty.yaml")
+		writeTestFile(t, yamlPath, "{}")
 
-		sqlitePath := filepath.Join(tmpDir, "empty.db")
+		sqlitePath := testPath(tmpDir, "empty.db")
 		require.NoError(t, MigrateYAMLToSQLite(yamlPath, sqlitePath))
 
 		store, err := newSQLiteStore(sqlitePath)
@@ -645,30 +649,18 @@ func TestMigrateYAMLToSQLiteNilQuotasAndState(t *testing.T) {
 	})
 }
 
-func TestNewWithConfigUserHomeDirError(t *testing.T) {
-	// Unset HOME to trigger os.UserHomeDir() error.
-	home := os.Getenv("HOME")
-	os.Unsetenv("HOME")
-	// Also unset fallback env vars that UserHomeDir checks.
-	plan9Home := os.Getenv("home")
-	os.Unsetenv("home")
-	userProfile := os.Getenv("USERPROFILE")
-	os.Unsetenv("USERPROFILE")
-	defer func() {
-		os.Setenv("HOME", home)
-		if plan9Home != "" {
-			os.Setenv("home", plan9Home)
-		}
-		if userProfile != "" {
-			os.Setenv("USERPROFILE", userProfile)
-		}
-	}()
+func TestError_NewWithConfigHomeUnavailable_Bad(t *testing.T) {
+	// Clear all supported home env vars so defaultStatePath cannot resolve a home directory.
+	t.Setenv("CORE_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("home", "")
+	t.Setenv("USERPROFILE", "")
 
 	_, err := NewWithConfig(Config{})
 	assert.Error(t, err, "should fail when HOME is unset")
 }
 
-func TestPersistMarshalError(t *testing.T) {
+func TestError_PersistMarshal_Good(t *testing.T) {
 	// yaml.Marshal on a struct with map[string]ModelQuota and map[string]*UsageStats
 	// should not fail in practice. We test the error path by using a type that
 	// yaml.Marshal cannot handle: a channel.
@@ -680,20 +672,20 @@ func TestPersistMarshalError(t *testing.T) {
 	assert.NoError(t, rl.Persist(), "valid persist should succeed")
 }
 
-func TestMigrateErrorsExtended(t *testing.T) {
+func TestError_MigrateErrorsExtended_Bad(t *testing.T) {
 	t.Run("unmarshal failure", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		path := filepath.Join(tmpDir, "bad.yaml")
-		require.NoError(t, os.WriteFile(path, []byte("invalid: yaml: ["), 0644))
-		err := MigrateYAMLToSQLite(path, filepath.Join(tmpDir, "out.db"))
+		path := testPath(tmpDir, "bad.yaml")
+		writeTestFile(t, path, "invalid: yaml: [")
+		err := MigrateYAMLToSQLite(path, testPath(tmpDir, "out.db"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "ratelimit.MigrateYAMLToSQLite: unmarshal")
 	})
 
 	t.Run("sqlite open failure", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "ok.yaml")
-		require.NoError(t, os.WriteFile(yamlPath, []byte("quotas: {}"), 0644))
+		yamlPath := testPath(tmpDir, "ok.yaml")
+		writeTestFile(t, yamlPath, "quotas: {}")
 		// Use an invalid sqlite path (dir where file should be)
 		err := MigrateYAMLToSQLite(yamlPath, "/dev/null/not-a-db")
 		assert.Error(t, err)

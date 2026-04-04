@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: EUPL-1.2 -->
+
 ---
 title: go-ratelimit
 description: Provider-agnostic sliding window rate limiter for LLM API calls, with YAML and SQLite persistence backends.
@@ -5,7 +7,7 @@ description: Provider-agnostic sliding window rate limiter for LLM API calls, wi
 
 # go-ratelimit
 
-**Module**: `forge.lthn.ai/core/go-ratelimit`
+**Module**: `dappco.re/go/core/go-ratelimit`
 **Licence**: EUPL-1.2
 **Go version**: 1.26+
 
@@ -19,7 +21,7 @@ migration helper is included.
 ## Quick Start
 
 ```go
-import "forge.lthn.ai/core/go-ratelimit"
+import "dappco.re/go/core/go-ratelimit"
 
 // Create a limiter with Gemini defaults (YAML backend).
 rl, err := ratelimit.New()
@@ -84,6 +86,8 @@ if err := rl.WaitForCapacity(ctx, "claude-opus-4", 2000); err != nil {
     return
 }
 // Capacity is available; proceed with the API call.
+
+// WaitForCapacity uses Decide's RetryAfter hint to avoid tight polling.
 ```
 
 ## Package Layout
@@ -103,6 +107,7 @@ The module is a single package with no sub-packages.
 
 | Dependency | Purpose | Category |
 |------------|---------|----------|
+| `dappco.re/go/core` | File I/O helpers, structured errors, JSON helpers, path/environment utilities | Direct |
 | `gopkg.in/yaml.v3` | YAML serialisation for the legacy persistence backend | Direct |
 | `modernc.org/sqlite` | Pure Go SQLite driver (no CGO required) | Direct |
 | `github.com/stretchr/testify` | Test assertions (`assert`, `require`) | Test only |
