@@ -602,6 +602,11 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	decision := Decision{}
 
 	if estimatedTokens < 0 {
+		stats, ok := rl.State[model]
+		if !ok || stats == nil {
+			stats = &UsageStats{DayStart: now}
+			rl.State[model] = stats
+		}
 		decision.Allowed = false
 		decision.Code = DecisionInvalidTokens
 		decision.Reason = "estimated tokens must be non-negative"
