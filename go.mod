@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: EUPL-1.2
 
-module dappco.re/go/core/go-ratelimit
+module dappco.re/go/ratelimit
 
 go 1.26.0
 
