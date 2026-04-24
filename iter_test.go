@@ -7,9 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestIter_Iterators_Good(t *testing.T) {
@@ -19,7 +16,9 @@ func TestIter_Iterators_Good(t *testing.T) {
 			"model-a": {MaxRPM: 10},
 		},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl.RecordUsage("model-b", 1, 1)
 
@@ -28,11 +27,18 @@ func TestIter_Iterators_Good(t *testing.T) {
 		for m := range rl.Models() {
 			models = append(models, m)
 		}
-		// Should include Gemini defaults (from NewWithConfig's default) + custom models
-		// and be sorted.
-		assert.Contains(t, models, "model-a")
-		assert.Contains(t, models, "model-b")
-		assert.Contains(t, models, "model-c")
+		if !testContains(
+			// Should include Gemini defaults (from NewWithConfig's default) + custom models
+			// and be sorted.
+			models, "model-a") {
+			t.Fatal(testContainsMessage(models, "model-a"))
+		}
+		if !testContains(models, "model-b") {
+			t.Fatal(testContainsMessage(models, "model-b"))
+		}
+		if !testContains(models, "model-c") {
+			t.Fatal(testContainsMessage(models, "model-c"))
+		}
 
 		// Check sorting of our specific models
 		foundA, foundB, foundC := -1, -1, -1
@@ -47,7 +53,9 @@ func TestIter_Iterators_Good(t *testing.T) {
 				foundC = i
 			}
 		}
-		assert.True(t, foundA < foundB && foundB < foundC, "models should be sorted: a < b < c")
+		if !(foundA < foundB && foundB < foundC) {
+			t.Fatal(testExpectedTrueMessage("models should be sorted: a < b < c"))
+		}
 	})
 
 	t.Run("Iter iterator is sorted", func(t *testing.T) {
@@ -55,12 +63,20 @@ func TestIter_Iterators_Good(t *testing.T) {
 		for m, stats := range rl.Iter() {
 			models = append(models, m)
 			if m == "model-a" {
-				assert.Equal(t, 10, stats.MaxRPM)
+				if !testEqual(10, stats.MaxRPM) {
+					t.Fatal(testWantGotMessage(10, stats.MaxRPM))
+				}
 			}
 		}
-		assert.Contains(t, models, "model-a")
-		assert.Contains(t, models, "model-b")
-		assert.Contains(t, models, "model-c")
+		if !testContains(models, "model-a") {
+			t.Fatal(testContainsMessage(models, "model-a"))
+		}
+		if !testContains(models, "model-b") {
+			t.Fatal(testContainsMessage(models, "model-b"))
+		}
+		if !testContains(models, "model-c") {
+			t.Fatal(testContainsMessage(models, "model-c"))
+		}
 
 		// Check sorting
 		foundA, foundB, foundC := -1, -1, -1
@@ -75,7 +91,9 @@ func TestIter_Iterators_Good(t *testing.T) {
 				foundC = i
 			}
 		}
-		assert.True(t, foundA < foundB && foundB < foundC, "iter should be sorted: a < b < c")
+		if !(foundA < foundB && foundB < foundC) {
+			t.Fatal(testExpectedTrueMessage("iter should be sorted: a < b < c"))
+		}
 	})
 }
 
@@ -87,7 +105,9 @@ func TestIter_IterEarlyBreak_Good(t *testing.T) {
 			"model-c": {MaxRPM: 30},
 		},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	t.Run("Iter breaks early", func(t *testing.T) {
 		var count int
@@ -97,7 +117,9 @@ func TestIter_IterEarlyBreak_Good(t *testing.T) {
 				break
 			}
 		}
-		assert.Equal(t, 1, count, "should stop after first iteration")
+		if !testEqual(1, count) {
+			t.Fatal(testWantGotMessage(1, count, "should stop after first iteration"))
+		}
 	})
 
 	t.Run("Models early break via manual iteration", func(t *testing.T) {
@@ -108,14 +130,18 @@ func TestIter_IterEarlyBreak_Good(t *testing.T) {
 				break
 			}
 		}
-		assert.Equal(t, 2, count, "should stop after two models")
+		if !testEqual(2, count) {
+			t.Fatal(testWantGotMessage(2, count, "should stop after two models"))
+		}
 	})
 }
 
 func TestIter_CountTokensFull_Ugly(t *testing.T) {
 	t.Run("empty model is rejected", func(t *testing.T) {
 		_, err := CountTokens(context.Background(), "key", "", "text")
-		assert.Error(t, err)
+		if err == nil {
+			t.Fatal(testExpectedErrorMessage())
+		}
 	})
 
 	t.Run("API error non-200", func(t *testing.T) {
@@ -126,15 +152,23 @@ func TestIter_CountTokensFull_Ugly(t *testing.T) {
 		defer server.Close()
 
 		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "key", "model", "text")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "status 400")
+		if err == nil {
+			t.Fatal(testExpectedErrorMessage())
+		}
+		if !testContains(err.Error(), "status 400") {
+			t.Fatal(testContainsMessage(err.Error(), "status 400"))
+		}
 	})
 
 	t.Run("context cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := countTokensWithClient(ctx, http.DefaultClient, "https://generativelanguage.googleapis.com", "key", "model", "text")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "do request")
+		if err == nil {
+			t.Fatal(testExpectedErrorMessage())
+		}
+		if !testContains(err.Error(), "do request") {
+			t.Fatal(testContainsMessage(err.Error(), "do request"))
+		}
 	})
 }
