@@ -6,8 +6,8 @@ go 1.26.0
 
 require (
 	dappco.re/go/core v0.8.0-alpha.1
-	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.47.0
+	gopkg.in/yaml.v3 v3.0.1 // Note: YAML parse for rate limit rules config; no core.* YAML parser.
+	modernc.org/sqlite v1.47.0 // Note: pure-Go SQLite for rate limit state persistence; no core.* SQLite driver.
 )
 
 require (
