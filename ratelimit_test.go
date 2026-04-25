@@ -1561,6 +1561,51 @@ func TestRatelimit_TokenTotals_Good(t *testing.T) {
 	}
 }
 
+func TestRatelimit_ThreatClockSkewFuturePersistedEntries(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "threat-clock-skew-future"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 0}
+
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	future := now.Add(10 * time.Minute)
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{future},
+		Tokens:   []TokenEntry{{Time: future, Count: 90}},
+		DayStart: future,
+	}
+
+	decision := rl.Decide(model, 1)
+	require.False(t, decision.Allowed)
+	assert.Equal(t, DecisionRPMLimit, decision.Code)
+	assert.True(t, rl.State[model].Requests[0].Equal(now))
+	assert.True(t, rl.State[model].Tokens[0].Time.Equal(now))
+	assert.True(t, rl.State[model].DayStart.Equal(now))
+
+	now = now.Add(61 * time.Second)
+	decision = rl.Decide(model, 1)
+	assert.True(t, decision.Allowed)
+}
+
+func TestRatelimit_ThreatIntegerOverflowRetryAfterForTokens(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	retryAfter := retryAfterForTokens(now, []TokenEntry{{Time: now, Count: maxInt()}}, 10, 1)
+
+	assert.Equal(t, time.Minute, retryAfter)
+}
+
+func TestRatelimit_ThreatIntegerOverflowDayCountSaturates(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "threat-day-count-overflow"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.State[model] = &UsageStats{DayStart: now, DayCount: maxInt()}
+
+	rl.RecordUsage(model, 1, 1)
+
+	assert.Equal(t, maxInt(), rl.State[model].DayCount)
+}
+
 // --- Phase 0: Benchmarks ---
 
 func BenchmarkCanSend(b *testing.B) {
