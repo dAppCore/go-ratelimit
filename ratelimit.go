@@ -8,8 +8,7 @@ import (
 	"io/fs"    // Note: intrinsic — fs.ErrNotExist distinguishes missing YAML state files; no core equivalent
 	"iter"     // Note: intrinsic — public lazy sequence API for Models and Iter; no core equivalent
 	"maps"     // Note: intrinsic — cloning and copying quota maps without bespoke loops; no core equivalent
-	"net/http" // Note: intrinsic — CountTokens must issue raw HTTP requests to Google's API; no core equivalent
-	"net/url"  // Note: intrinsic — CountTokens base URL parsing and model path escaping require url.URL semantics; no core equivalent
+	"net/http" // Note: intrinsic — public CountTokens uses http.Client/Request; no core equivalent
 	"slices"   // Note: intrinsic — cloning, sorting, pruning, and iterating rate-limit state slices; no core equivalent
 	"sync"     // Note: intrinsic — RWMutex protects shared in-memory limiter state; no core equivalent
 	"time"     // Note: intrinsic — sliding windows, daily quota periods, timers, and persisted timestamps; no core equivalent
@@ -42,6 +41,7 @@ const (
 	backendSQLite               = "sqlite"
 	countTokensErrorBodyLimit   = 8 * 1024
 	countTokensSuccessBodyLimit = 1 * 1024 * 1024
+	countTokensHTTPStatusOK     = 200
 )
 
 // ModelQuota defines the rate limits for a specific model.
@@ -812,7 +812,7 @@ func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, ap
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != countTokensHTTPStatusOK {
 		body, err := readLimitedBody(resp.Body, countTokensErrorBodyLimit)
 		if err != nil {
 			return 0, core.E("ratelimit.CountTokens", "read error body", err)
@@ -1002,15 +1002,29 @@ func countTokensURL(baseURL, model string) (string, error) {
 		return "", core.E("ratelimit.countTokensURL", "empty model", nil)
 	}
 
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
+	normalised := core.URLNormalize(baseURL)
+	if normalised == "" || !hasURLAuthority(normalised) {
 		return "", core.E("ratelimit.countTokensURL", "invalid base url", nil)
 	}
 
-	return core.Concat(core.TrimSuffix(parsed.String(), "/"), "/v1beta/models/", url.PathEscape(model), ":countTokens"), nil
+	return core.Concat(core.TrimSuffix(normalised, "/"), "/v1beta/models/", core.URLPathEscape(model), ":countTokens"), nil
+}
+
+func hasURLAuthority(rawURL string) bool {
+	parts := core.SplitN(rawURL, "://", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return false
+	}
+
+	remainder := parts[1]
+	if remainder == "" {
+		return false
+	}
+
+	authority := core.SplitN(remainder, "/", 2)[0]
+	authority = core.SplitN(authority, "?", 2)[0]
+	authority = core.SplitN(authority, "#", 2)[0]
+	return authority != ""
 }
 
 func readLimitedBody(r io.Reader, limit int64) (string, error) {
