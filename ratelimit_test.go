@@ -2388,3 +2388,855 @@ func TestRatelimit_CanSend_Bad(t *testing.T) {
 		t.Fatal(testExpectedFalseMessage("should reject when RPM quota is exhausted"))
 	}
 }
+
+func TestRatelimit_CanSend_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "cansend-window-boundary"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(-time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(-time.Minute), Count: 100}},
+		DayStart: now,
+	}
+
+	if !rl.CanSend(model, 100) {
+		t.Fatal(testExpectedTrueMessage("entries exactly at the one-minute boundary should be pruned"))
+	}
+}
+
+func TestRatelimit_Decide_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "decide-rpm-denied"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(-10 * time.Second)},
+		DayStart: now,
+		DayCount: 1,
+	}
+
+	decision := rl.Decide(model, 1)
+	if decision.Allowed {
+		t.Fatal(testExpectedFalseMessage("exhausted RPM quota should deny the decision"))
+	}
+	if !testEqual(DecisionRPMLimit, decision.Code) {
+		t.Fatal(testWantGotMessage(DecisionRPMLimit, decision.Code))
+	}
+	if decision.RetryAfter <= 0 {
+		t.Fatal(testGreaterMessage(decision.RetryAfter, 0))
+	}
+}
+
+func TestRatelimit_Decide_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "decide-exact-tpm-boundary"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now},
+		Tokens:   []TokenEntry{{Time: now, Count: 90}},
+		DayStart: now,
+		DayCount: 1,
+	}
+
+	decision := rl.Decide(model, 10)
+	if !decision.Allowed {
+		t.Fatal(testExpectedTrueMessage("exact TPM boundary should still be allowed"))
+	}
+	if !testEqual(DecisionAllowed, decision.Code) {
+		t.Fatal(testWantGotMessage(DecisionAllowed, decision.Code))
+	}
+}
+
+func TestRatelimit_Prune_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "prune-recent-over-quota"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(-30 * time.Second)},
+		Tokens:   []TokenEntry{{Time: now.Add(-30 * time.Second), Count: 10}},
+		DayStart: now,
+		DayCount: 1,
+	}
+
+	if rl.CanSend(model, 1) {
+		t.Fatal(testExpectedFalseMessage("recent entries must not be pruned before enforcing quota"))
+	}
+	if !testHasLen(rl.State[model].Requests, 1) {
+		t.Fatal(testLenMessage(rl.State[model].Requests, 1))
+	}
+}
+
+func TestRatelimit_Prune_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "prune-future-clock-skew"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(10 * time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(10 * time.Minute), Count: 10}},
+		DayStart: now.Add(10 * time.Minute),
+		DayCount: 1,
+	}
+
+	if rl.CanSend(model, 1) {
+		t.Fatal(testExpectedFalseMessage("future-dated usage should normalize to now and still count"))
+	}
+	stats := rl.State[model]
+	if !stats.Requests[0].Equal(now) {
+		t.Fatal(testWantGotMessage(now, stats.Requests[0]))
+	}
+	if !stats.Tokens[0].Time.Equal(now) {
+		t.Fatal(testWantGotMessage(now, stats.Tokens[0].Time))
+	}
+	if !stats.DayStart.Equal(now) {
+		t.Fatal(testWantGotMessage(now, stats.DayStart))
+	}
+}
+
+func TestRatelimit_RecordUsage_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "record-negative-total"
+
+	rl.RecordUsage(model, -100, -200)
+
+	stats := rl.State[model]
+	if testIsNil(stats) {
+		t.Fatal(testExpectedNonNilMessage())
+	}
+	if !testEqual(0, stats.Tokens[0].Count) {
+		t.Fatal(testWantGotMessage(0, stats.Tokens[0].Count, "negative token totals should clamp to zero"))
+	}
+	if !testEqual(1, stats.DayCount) {
+		t.Fatal(testWantGotMessage(1, stats.DayCount))
+	}
+}
+
+func TestRatelimit_RecordUsage_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "record-overflow"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.State[model] = &UsageStats{
+		DayStart: now,
+		DayCount: maxInt(),
+	}
+
+	rl.RecordUsage(model, maxInt(), 1)
+
+	stats := rl.State[model]
+	if !testEqual(maxInt(), stats.Tokens[0].Count) {
+		t.Fatal(testWantGotMessage(maxInt(), stats.Tokens[0].Count))
+	}
+	if !testEqual(maxInt(), stats.DayCount) {
+		t.Fatal(testWantGotMessage(maxInt(), stats.DayCount))
+	}
+}
+
+func TestRatelimit_Reset_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	rl.RecordUsage("reset-kept", 1, 1)
+
+	rl.Reset("reset-missing")
+
+	if !testContains(rl.State, "reset-kept") {
+		t.Fatal(testContainsMessage(rl.State, "reset-kept"))
+	}
+}
+
+func TestRatelimit_Reset_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+
+	rl.Reset("")
+	rl.Reset("")
+	rl.Reset("missing-after-global-reset")
+
+	if !testIsEmpty(rl.State) {
+		t.Fatal(testEmptyMessage(rl.State))
+	}
+}
+
+func TestRatelimit_WaitForCapacity_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "wait-rpd-denied"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 1000, MaxRPD: 1}
+	rl.State[model] = &UsageStats{DayStart: now, DayCount: 1}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	err := rl.WaitForCapacity(ctx, model, 1)
+	if !testErrorIs(err, context.DeadlineExceeded) {
+		t.Fatal(testErrorIsMessage(err, context.DeadlineExceeded))
+	}
+}
+
+func TestRatelimit_WaitForCapacity_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "wait-zero-token-boundary"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now},
+		Tokens:   []TokenEntry{{Time: now, Count: 100}},
+		DayStart: now,
+		DayCount: 1,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := rl.WaitForCapacity(ctx, model, 0); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+}
+
+func TestRatelimit_Stats_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "stats-stale-over-quota"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 10, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(-2 * time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(-2 * time.Minute), Count: 10}},
+		DayStart: now,
+	}
+
+	stats := rl.Stats(model)
+	if !testEqual(0, stats.RPM) {
+		t.Fatal(testWantGotMessage(0, stats.RPM))
+	}
+	if !testEqual(0, stats.TPM) {
+		t.Fatal(testWantGotMessage(0, stats.TPM))
+	}
+}
+
+func TestRatelimit_Stats_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "stats-future-normalized"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(time.Minute), Count: 5}},
+		DayStart: now.Add(time.Minute),
+		DayCount: 1,
+	}
+
+	stats := rl.Stats(model)
+	if !testEqual(1, stats.RPM) {
+		t.Fatal(testWantGotMessage(1, stats.RPM))
+	}
+	if !testEqual(5, stats.TPM) {
+		t.Fatal(testWantGotMessage(5, stats.TPM))
+	}
+	if !stats.DayStart.Equal(now) {
+		t.Fatal(testWantGotMessage(now, stats.DayStart))
+	}
+}
+
+func TestRatelimit_AllStats_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "allstats-stale-over-quota"
+	now := time.Unix(1_700_000_000, 0)
+	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 10, MaxRPD: 10}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(-2 * time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(-2 * time.Minute), Count: 10}},
+		DayStart: now,
+	}
+
+	all := rl.AllStats()
+	stats := all[model]
+	if !testEqual(0, stats.RPM) {
+		t.Fatal(testWantGotMessage(0, stats.RPM))
+	}
+	if !testEqual(0, stats.TPM) {
+		t.Fatal(testWantGotMessage(0, stats.TPM))
+	}
+}
+
+func TestRatelimit_AllStats_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	rl.State["allstats-nil"] = nil
+
+	all := rl.AllStats()
+	if !testContains(all, "allstats-nil") {
+		t.Fatal(testContainsMessage(all, "allstats-nil"))
+	}
+	stats := all["allstats-nil"]
+	if !testEqual(0, stats.RPM) {
+		t.Fatal(testWantGotMessage(0, stats.RPM))
+	}
+	if !testEqual(0, stats.TPM) {
+		t.Fatal(testWantGotMessage(0, stats.TPM))
+	}
+}
+
+func TestRatelimit_DefaultQuotas_Bad(t *testing.T) {
+	rl1 := newTestLimiter(t)
+	rl1.Quotas["gemini-3-pro-preview"] = ModelQuota{MaxRPM: 1, MaxTPM: 1, MaxRPD: 1}
+
+	rl2 := newTestLimiter(t)
+	q := rl2.Quotas["gemini-3-pro-preview"]
+	if !testEqual(150, q.MaxRPM) {
+		t.Fatal(testWantGotMessage(150, q.MaxRPM, "mutating one limiter must not corrupt later defaults"))
+	}
+	if !testEqual(1000000, q.MaxTPM) {
+		t.Fatal(testWantGotMessage(1000000, q.MaxTPM))
+	}
+}
+
+func TestRatelimit_DefaultQuotas_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "gemini-2.0-flash-lite"
+
+	for range 25 {
+		rl.RecordUsage(model, 1000000, 1000000)
+	}
+	if !rl.CanSend(model, maxInt()) {
+		t.Fatal(testExpectedTrueMessage("all-zero default quota should remain unlimited"))
+	}
+}
+
+func TestRatelimit_ConcurrentAccess_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "concurrent-denied"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 100}
+	rl.RecordUsage(model, 1, 1)
+
+	var wg sync.WaitGroup
+	results := make(chan bool, 20)
+	for range 20 {
+		wg.Go(func() {
+			results <- rl.CanSend(model, 1)
+		})
+	}
+	wg.Wait()
+	close(results)
+
+	for allowed := range results {
+		if allowed {
+			t.Fatal(testExpectedFalseMessage("all concurrent checks should observe exhausted RPM"))
+		}
+	}
+}
+
+func TestRatelimit_ConcurrentAccess_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "concurrent-nil-state"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 1000000, MaxRPD: 1000}
+	rl.State[model] = nil
+
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			for range 20 {
+				rl.RecordUsage(model, 1, 1)
+				rl.CanSend(model, 1)
+				rl.Stats(model)
+			}
+		})
+	}
+	wg.Wait()
+
+	if testIsNil(rl.State[model]) {
+		t.Fatal(testExpectedNonNilMessage())
+	}
+}
+
+func TestRatelimit_BackgroundPrune_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "background-stopped"
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{time.Now().Add(-2 * time.Minute)},
+		Tokens:   []TokenEntry{{Time: time.Now().Add(-2 * time.Minute), Count: 1}},
+	}
+
+	stop := rl.BackgroundPrune(time.Hour)
+	stop()
+	time.Sleep(5 * time.Millisecond)
+
+	if !testContains(rl.State, model) {
+		t.Fatal(testContainsMessage(rl.State, model, "stopped pruner should not prune stale state"))
+	}
+}
+
+func TestRatelimit_BackgroundPrune_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+
+	stop := rl.BackgroundPrune(time.Hour)
+	stop()
+	stop()
+}
+
+func TestRatelimit_PersistSkipsNilState_Bad(t *testing.T) {
+	path := testPath(t.TempDir(), "nil-state.yaml")
+	rl := newTestLimiter(t)
+	rl.filePath = path
+	rl.State["nil-model"] = nil
+
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	content, err := readLocalFile(path)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if testContains(content, "nil-model") {
+		t.Fatal(testNotContainsMessage(content, "nil-model"))
+	}
+}
+
+func TestRatelimit_PersistSkipsNilState_Ugly(t *testing.T) {
+	path := testPath(t.TempDir(), "mixed-state.yaml")
+	rl := newTestLimiter(t)
+	rl.filePath = path
+	rl.State["nil-model"] = nil
+	rl.RecordUsage("kept-model", 2, 3)
+
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	loaded := newTestLimiter(t)
+	loaded.filePath = path
+	if err := loaded.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if testContains(loaded.State, "nil-model") {
+		t.Fatal(testNotContainsMessage(loaded.State, "nil-model"))
+	}
+	if !testContains(loaded.State, "kept-model") {
+		t.Fatal(testContainsMessage(loaded.State, "kept-model"))
+	}
+}
+
+func TestRatelimit_TokenTotals_Bad(t *testing.T) {
+	if !testEqual(0, safeTokenSum(-10, -20)) {
+		t.Fatal(testWantGotMessage(0, safeTokenSum(-10, -20)))
+	}
+	if !testEqual(0, totalTokenCount([]TokenEntry{{Count: -1}, {Count: -2}})) {
+		t.Fatal(testWantGotMessage(0, totalTokenCount([]TokenEntry{{Count: -1}, {Count: -2}})))
+	}
+}
+
+func TestRatelimit_TokenTotals_Ugly(t *testing.T) {
+	tokens := []TokenEntry{
+		{Count: maxInt() - 1},
+		{Count: 10},
+		{Count: -100},
+	}
+	if !testEqual(maxInt(), totalTokenCount(tokens)) {
+		t.Fatal(testWantGotMessage(maxInt(), totalTokenCount(tokens)))
+	}
+}
+
+func TestRatelimit_DefaultProfiles_Bad(t *testing.T) {
+	profiles := DefaultProfiles()
+	gemini := profiles[ProviderGemini]
+	gemini.Models["gemini-3-pro-preview"] = ModelQuota{MaxRPM: 1, MaxTPM: 1, MaxRPD: 1}
+
+	fresh := DefaultProfiles()
+	q := fresh[ProviderGemini].Models["gemini-3-pro-preview"]
+	if !testEqual(150, q.MaxRPM) {
+		t.Fatal(testWantGotMessage(150, q.MaxRPM, "DefaultProfiles should return isolated maps"))
+	}
+}
+
+func TestRatelimit_DefaultProfiles_Ugly(t *testing.T) {
+	profiles := DefaultProfiles()
+	local := profiles[ProviderLocal]
+	if testIsNil(local.Models) {
+		t.Fatal(testExpectedNonNilMessage("local profile model map should be mutable"))
+	}
+	local.Models["edge-local"] = ModelQuota{MaxRPM: 1}
+	if !testContains(local.Models, "edge-local") {
+		t.Fatal(testContainsMessage(local.Models, "edge-local"))
+	}
+}
+
+func TestRatelimit_NewBackwardCompatibility_Bad(t *testing.T) {
+	t.Setenv("CORE_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("home", "")
+	t.Setenv("USERPROFILE", "")
+
+	_, err := New()
+	if err == nil {
+		t.Fatal(testExpectedErrorMessage("New should fail when no default state directory can be resolved"))
+	}
+}
+
+func TestRatelimit_NewBackwardCompatibility_Ugly(t *testing.T) {
+	coreHome := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("CORE_HOME", coreHome)
+	t.Setenv("HOME", home)
+	t.Setenv("home", "")
+	t.Setenv("USERPROFILE", "")
+
+	rl, err := New()
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	want := testPath(coreHome, defaultStateDirName, defaultYAMLStateFile)
+	if !testEqual(want, rl.filePath) {
+		t.Fatal(testWantGotMessage(want, rl.filePath))
+	}
+}
+
+func TestRatelimit_SetQuota_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "setquota-denied"
+	rl.SetQuota(model, ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 10})
+	rl.RecordUsage(model, 1, 1)
+
+	if rl.CanSend(model, 1) {
+		t.Fatal(testExpectedFalseMessage("new restrictive quota should be enforced"))
+	}
+}
+
+func TestRatelimit_SetQuota_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	rl.SetQuota("", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 10})
+	rl.RecordUsage("", 1, 1)
+
+	if rl.CanSend("", 1) {
+		t.Fatal(testExpectedFalseMessage("empty model key should still obey its explicit quota"))
+	}
+}
+
+func TestRatelimit_AddProvider_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	rl.SetQuota("gpt-4o", ModelQuota{MaxRPM: 1, MaxTPM: 1, MaxRPD: 1})
+
+	rl.AddProvider(ProviderOpenAI)
+
+	q := rl.Quotas["gpt-4o"]
+	if !testEqual(500, q.MaxRPM) {
+		t.Fatal(testWantGotMessage(500, q.MaxRPM, "provider defaults should overwrite matching existing quotas"))
+	}
+	if !testEqual(30000, q.MaxTPM) {
+		t.Fatal(testWantGotMessage(30000, q.MaxTPM))
+	}
+}
+
+func TestRatelimit_AddProvider_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	rl.AddProvider(ProviderAnthropic)
+	firstCount := len(rl.Quotas)
+
+	rl.AddProvider(ProviderAnthropic)
+	rl.AddProvider(ProviderAnthropic)
+
+	if !testEqual(firstCount, len(rl.Quotas)) {
+		t.Fatal(testWantGotMessage(firstCount, len(rl.Quotas), "adding the same provider should be idempotent"))
+	}
+}
+
+func TestRatelimit_ProviderConstants_Bad(t *testing.T) {
+	unknown := Provider("gemini ")
+	if testEqual(ProviderGemini, unknown) {
+		t.Fatal(testExpectedFalseMessage("provider constants should not silently normalize unknown strings"))
+	}
+}
+
+func TestRatelimit_ProviderConstants_Ugly(t *testing.T) {
+	seen := map[Provider]bool{
+		ProviderGemini:    true,
+		ProviderOpenAI:    true,
+		ProviderAnthropic: true,
+		ProviderLocal:     true,
+	}
+
+	for _, provider := range []Provider{ProviderGemini, ProviderOpenAI, ProviderAnthropic, ProviderLocal} {
+		if !seen[provider] {
+			t.Fatal(testContainsMessage(seen, provider))
+		}
+	}
+}
+
+func TestRatelimit_ConcurrentMultipleModels_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	rl.Quotas["blocked"] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 10}
+	rl.Quotas["open"] = ModelQuota{MaxRPM: 100, MaxTPM: 1000, MaxRPD: 10}
+	rl.RecordUsage("blocked", 1, 1)
+
+	var wg sync.WaitGroup
+	blocked := make(chan bool, 10)
+	open := make(chan bool, 10)
+	for range 10 {
+		wg.Go(func() {
+			blocked <- rl.CanSend("blocked", 1)
+		})
+		wg.Go(func() {
+			open <- rl.CanSend("open", 1)
+		})
+	}
+	wg.Wait()
+	close(blocked)
+	close(open)
+
+	for allowed := range blocked {
+		if allowed {
+			t.Fatal(testExpectedFalseMessage("saturated model should remain blocked"))
+		}
+	}
+	for allowed := range open {
+		if !allowed {
+			t.Fatal(testExpectedTrueMessage("independent model should remain open"))
+		}
+	}
+}
+
+func TestRatelimit_ConcurrentMultipleModels_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	models := []string{"", "model/with/slash", "model with spaces"}
+	for _, model := range models {
+		rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 1000, MaxRPD: 100}
+	}
+
+	var wg sync.WaitGroup
+	for _, model := range models {
+		model := model
+		wg.Go(func() {
+			for range 10 {
+				rl.RecordUsage(model, 1, 1)
+			}
+		})
+	}
+	wg.Wait()
+
+	for _, model := range models {
+		stats := rl.Stats(model)
+		if !testEqual(10, stats.RPD) {
+			t.Fatal(testWantGotMessage(10, stats.RPD, model))
+		}
+	}
+}
+
+func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "allstats-record-nil"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 1000}
+	rl.State[model] = nil
+
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			for range 20 {
+				_ = rl.AllStats()
+			}
+		})
+		wg.Go(func() {
+			for range 20 {
+				rl.RecordUsage(model, 1, 1)
+			}
+		})
+	}
+	wg.Wait()
+
+	if testIsNil(rl.State[model]) {
+		t.Fatal(testExpectedNonNilMessage())
+	}
+}
+
+func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "allstats-record-reset"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 1000}
+
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() {
+			for range 25 {
+				rl.RecordUsage(model, 1, 1)
+			}
+		})
+		wg.Go(func() {
+			for range 25 {
+				_ = rl.AllStats()
+			}
+		})
+		wg.Go(func() {
+			for range 5 {
+				rl.Reset("")
+			}
+		})
+	}
+	wg.Wait()
+}
+
+func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "wait-record-denied"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 100}
+	rl.RecordUsage(model, 1, 1)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 5)
+	for range 5 {
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			errs <- rl.WaitForCapacity(ctx, model, 1)
+		})
+	}
+	for range 3 {
+		wg.Go(func() {
+			rl.RecordUsage(model, 1, 1)
+		})
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if !testErrorIs(err, context.DeadlineExceeded) {
+			t.Fatal(testErrorIsMessage(err, context.DeadlineExceeded))
+		}
+	}
+}
+
+func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Ugly(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "wait-record-zero"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 1000}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 5)
+	for range 5 {
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			errs <- rl.WaitForCapacity(ctx, model, 0)
+		})
+	}
+	for range 5 {
+		wg.Go(func() {
+			for range 10 {
+				rl.RecordUsage(model, 1, 1)
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatal(testUnexpectedErrorMessage(err))
+		}
+	}
+}
+
+func TestRatelimit_EndToEndMultiProvider_Bad(t *testing.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath:  testPath(t.TempDir(), "multi-bad.yaml"),
+		Providers: []Provider{ProviderGemini, ProviderAnthropic},
+	})
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	for range 50 {
+		rl.RecordUsage("claude-opus-4", 1, 1)
+	}
+
+	decision := rl.Decide("claude-opus-4", 1)
+	if decision.Allowed {
+		t.Fatal(testExpectedFalseMessage("Anthropic model should hit its default RPM limit"))
+	}
+	if !testEqual(DecisionRPMLimit, decision.Code) {
+		t.Fatal(testWantGotMessage(DecisionRPMLimit, decision.Code))
+	}
+	if !rl.CanSend("gemini-3-pro-preview", 1) {
+		t.Fatal(testExpectedTrueMessage("Gemini model should remain independent"))
+	}
+}
+
+func TestRatelimit_EndToEndMultiProvider_Ugly(t *testing.T) {
+	path := testPath(t.TempDir(), "multi-ugly.yaml")
+	model := "local/custom model"
+	quota := ModelQuota{MaxRPM: 5, MaxTPM: 500, MaxRPD: 0}
+	rl, err := NewWithConfig(Config{
+		FilePath:  path,
+		Providers: []Provider{ProviderGemini, ProviderLocal},
+		Quotas:    map[string]ModelQuota{model: quota},
+	})
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	if !rl.CanSend(model, 10) {
+		t.Fatal(testExpectedTrueMessage())
+	}
+	rl.RecordUsage(model, 4, 6)
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	loaded, err := NewWithConfig(Config{
+		FilePath:  path,
+		Providers: []Provider{ProviderGemini, ProviderLocal},
+		Quotas:    map[string]ModelQuota{model: quota},
+	})
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := loaded.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	stats := loaded.Stats(model)
+	if !testEqual(1, stats.RPM) {
+		t.Fatal(testWantGotMessage(1, stats.RPM))
+	}
+	if !testEqual(10, stats.TPM) {
+		t.Fatal(testWantGotMessage(10, stats.TPM))
+	}
+}
+
+type testAssertShim struct{}
+
+type testRequireShim struct{}
+
+var assert testAssertShim
+var require testRequireShim
+
+func (testAssertShim) Equal(tb testing.TB, want, got any, msgAndArgs ...any) bool {
+	tb.Helper()
+	if !testEqual(want, got) {
+		tb.Error(testWantGotMessage(want, got, msgAndArgs...))
+		return false
+	}
+	return true
+}
+
+func (testAssertShim) True(tb testing.TB, value bool, msgAndArgs ...any) bool {
+	tb.Helper()
+	if !value {
+		tb.Error(testExpectedTrueMessage(msgAndArgs...))
+		return false
+	}
+	return true
+}
+
+func (testRequireShim) False(tb testing.TB, value bool, msgAndArgs ...any) {
+	tb.Helper()
+	if value {
+		tb.Fatal(testExpectedFalseMessage(msgAndArgs...))
+	}
+}
