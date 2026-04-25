@@ -2391,18 +2391,43 @@ func TestRatelimit_CanSend_Bad(t *testing.T) {
 
 func TestRatelimit_CanSend_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
-	model := "cansend-window-boundary"
+	model := "cansend-concurrent-prune"
 	now := time.Unix(1_700_000_000, 0)
 	rl.now = func() time.Time { return now }
-	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 10}
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 1000000, MaxRPD: 1000}
 	rl.State[model] = &UsageStats{
-		Requests: []time.Time{now.Add(-time.Minute)},
-		Tokens:   []TokenEntry{{Time: now.Add(-time.Minute), Count: 100}},
+		Requests: []time.Time{now.Add(-2 * time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(-2 * time.Minute), Count: 100}},
 		DayStart: now,
 	}
 
-	if !rl.CanSend(model, 100) {
-		t.Fatal(testExpectedTrueMessage("entries exactly at the one-minute boundary should be pruned"))
+	const workers = 32
+	start := make(chan struct{})
+	results := make(chan bool, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			<-start
+			results <- rl.CanSend(model, 100)
+		})
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	for allowed := range results {
+		if !allowed {
+			t.Fatal(testExpectedTrueMessage("concurrent CanSend calls should all observe pruned capacity"))
+		}
+	}
+
+	stats := rl.Stats(model)
+	if !testEqual(0, stats.RPM) {
+		t.Fatal(testWantGotMessage(0, stats.RPM))
+	}
+	if !testEqual(0, stats.TPM) {
+		t.Fatal(testWantGotMessage(0, stats.TPM))
 	}
 }
 
@@ -2511,6 +2536,9 @@ func TestRatelimit_RecordUsage_Bad(t *testing.T) {
 	if testIsNil(stats) {
 		t.Fatal(testExpectedNonNilMessage())
 	}
+	if !testHasLen(stats.Tokens, 1) {
+		t.Fatal(testLenMessage(stats.Tokens, 1))
+	}
 	if !testEqual(0, stats.Tokens[0].Count) {
 		t.Fatal(testWantGotMessage(0, stats.Tokens[0].Count, "negative token totals should clamp to zero"))
 	}
@@ -2521,194 +2549,320 @@ func TestRatelimit_RecordUsage_Bad(t *testing.T) {
 
 func TestRatelimit_RecordUsage_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
-	model := "record-overflow"
+	model := "record-concurrent-prune"
 	now := time.Unix(1_700_000_000, 0)
 	rl.now = func() time.Time { return now }
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 1000000, MaxRPD: 1000}
 	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now.Add(-2 * time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(-2 * time.Minute), Count: 500}},
 		DayStart: now,
-		DayCount: maxInt(),
 	}
 
-	rl.RecordUsage(model, maxInt(), 1)
-
-	stats := rl.State[model]
-	if !testEqual(maxInt(), stats.Tokens[0].Count) {
-		t.Fatal(testWantGotMessage(maxInt(), stats.Tokens[0].Count))
+	const recorders = 4
+	const recordsPerWorker = 25
+	var wg sync.WaitGroup
+	for range recorders {
+		wg.Go(func() {
+			for range recordsPerWorker {
+				rl.RecordUsage(model, 1, 1)
+			}
+		})
 	}
-	if !testEqual(maxInt(), stats.DayCount) {
-		t.Fatal(testWantGotMessage(maxInt(), stats.DayCount))
+	for range 3 {
+		wg.Go(func() {
+			for range recordsPerWorker {
+				_ = rl.Stats(model)
+			}
+		})
+	}
+	wg.Wait()
+
+	stats := rl.Stats(model)
+	wantRecords := recorders * recordsPerWorker
+	if !testEqual(wantRecords, stats.RPM) {
+		t.Fatal(testWantGotMessage(wantRecords, stats.RPM))
+	}
+	if !testEqual(wantRecords*2, stats.TPM) {
+		t.Fatal(testWantGotMessage(wantRecords*2, stats.TPM))
+	}
+	if !testEqual(wantRecords, stats.RPD) {
+		t.Fatal(testWantGotMessage(wantRecords, stats.RPD))
 	}
 }
 
 func TestRatelimit_Reset_Bad(t *testing.T) {
 	rl := newTestLimiter(t)
-	rl.RecordUsage("reset-kept", 1, 1)
+	model := "reset-kept"
+	rl.RecordUsage(model, 1, 1)
 
 	rl.Reset("reset-missing")
 
-	if !testContains(rl.State, "reset-kept") {
-		t.Fatal(testContainsMessage(rl.State, "reset-kept"))
+	if !testContains(rl.State, model) {
+		t.Fatal(testContainsMessage(rl.State, model))
+	}
+	if testContains(rl.State, "reset-missing") {
+		t.Fatal(testNotContainsMessage(rl.State, "reset-missing"))
+	}
+	stats := rl.Stats(model)
+	if !testEqual(1, stats.RPD) {
+		t.Fatal(testWantGotMessage(1, stats.RPD, "unknown model reset should be a no-op"))
 	}
 }
 
 func TestRatelimit_Reset_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
+	model := "reset-during-decide"
+	now := time.Unix(1_700_000_000, 0)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	rl.now = func() time.Time {
+		select {
+		case <-entered:
+		default:
+			close(entered)
+		}
+		<-release
+		return now
+	}
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 100}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now},
+		DayStart: now,
+		DayCount: 1,
+	}
 
-	rl.Reset("")
-	rl.Reset("")
-	rl.Reset("missing-after-global-reset")
+	decisionDone := make(chan Decision, 1)
+	go func() {
+		decisionDone <- rl.Decide(model, 1)
+	}()
 
-	if !testIsEmpty(rl.State) {
-		t.Fatal(testEmptyMessage(rl.State))
+	<-entered
+	resetDone := make(chan struct{})
+	go func() {
+		rl.Reset(model)
+		close(resetDone)
+	}()
+
+	select {
+	case <-resetDone:
+		t.Fatal(testExpectedFalseMessage("reset should wait for in-flight Decide to release the lock"))
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	close(release)
+	released = true
+
+	decision := <-decisionDone
+	if decision.Allowed {
+		t.Fatal(testExpectedFalseMessage("in-flight decision should see the pre-reset exhausted quota"))
+	}
+	if !testEqual(DecisionRPMLimit, decision.Code) {
+		t.Fatal(testWantGotMessage(DecisionRPMLimit, decision.Code))
+	}
+
+	select {
+	case <-resetDone:
+	case <-time.After(time.Second):
+		t.Fatal(testEventuallyMessage("reset should finish after Decide completes"))
+	}
+	if testContains(rl.State, model) {
+		t.Fatal(testNotContainsMessage(rl.State, model))
 	}
 }
 
 func TestRatelimit_WaitForCapacity_Bad(t *testing.T) {
 	rl := newTestLimiter(t)
-	model := "wait-rpd-denied"
+	model := "wait-already-cancelled"
 	now := time.Unix(1_700_000_000, 0)
 	rl.now = func() time.Time { return now }
-	rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 1000, MaxRPD: 1}
-	rl.State[model] = &UsageStats{DayStart: now, DayCount: 1}
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 100}
+	rl.State[model] = &UsageStats{
+		Requests: []time.Time{now},
+		DayStart: now,
+		DayCount: 1,
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	err := rl.WaitForCapacity(ctx, model, 1)
-	if !testErrorIs(err, context.DeadlineExceeded) {
-		t.Fatal(testErrorIsMessage(err, context.DeadlineExceeded))
+	if !testErrorIs(err, context.Canceled) {
+		t.Fatal(testErrorIsMessage(err, context.Canceled))
 	}
 }
 
 func TestRatelimit_WaitForCapacity_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
-	model := "wait-zero-token-boundary"
+	model := "wait-capacity-at-deadline"
 	now := time.Unix(1_700_000_000, 0)
 	rl.now = func() time.Time { return now }
-	rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
+	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 100}
 	rl.State[model] = &UsageStats{
-		Requests: []time.Time{now},
-		Tokens:   []TokenEntry{{Time: now, Count: 100}},
+		Requests: []time.Time{now.Add(-time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(-time.Minute), Count: 100}},
 		DayStart: now,
 		DayCount: 1,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Nanosecond))
 	defer cancel()
 
-	if err := rl.WaitForCapacity(ctx, model, 0); err != nil {
-		t.Fatal(testUnexpectedErrorMessage(err))
+	if err := rl.WaitForCapacity(ctx, model, 1); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err, "capacity exactly at the limiter boundary should win before context wait"))
 	}
 }
 
 func TestRatelimit_Stats_Bad(t *testing.T) {
 	rl := newTestLimiter(t)
-	model := "stats-stale-over-quota"
-	now := time.Unix(1_700_000_000, 0)
-	rl.now = func() time.Time { return now }
-	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 10, MaxRPD: 10}
-	rl.State[model] = &UsageStats{
-		Requests: []time.Time{now.Add(-2 * time.Minute)},
-		Tokens:   []TokenEntry{{Time: now.Add(-2 * time.Minute), Count: 10}},
-		DayStart: now,
-	}
+	model := "stats-unknown-model"
 
 	stats := rl.Stats(model)
-	if !testEqual(0, stats.RPM) {
-		t.Fatal(testWantGotMessage(0, stats.RPM))
+	if !testIsZero(stats) {
+		t.Fatal(testZeroMessage(stats, "unknown model should return zero stats"))
 	}
-	if !testEqual(0, stats.TPM) {
-		t.Fatal(testWantGotMessage(0, stats.TPM))
+	if testContains(rl.State, model) {
+		t.Fatal(testNotContainsMessage(rl.State, model, "Stats should not create state for unknown models"))
 	}
 }
 
 func TestRatelimit_Stats_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
-	model := "stats-future-normalized"
+	model := "stats-concurrent-prune"
 	now := time.Unix(1_700_000_000, 0)
 	rl.now = func() time.Time { return now }
-	rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 10}
 	rl.State[model] = &UsageStats{
-		Requests: []time.Time{now.Add(time.Minute)},
-		Tokens:   []TokenEntry{{Time: now.Add(time.Minute), Count: 5}},
-		DayStart: now.Add(time.Minute),
-		DayCount: 1,
+		Requests: []time.Time{now.Add(-2 * time.Minute)},
+		Tokens:   []TokenEntry{{Time: now.Add(-2 * time.Minute), Count: 5}},
+		DayStart: now,
 	}
 
-	stats := rl.Stats(model)
-	if !testEqual(1, stats.RPM) {
-		t.Fatal(testWantGotMessage(1, stats.RPM))
+	const workers = 24
+	start := make(chan struct{})
+	results := make(chan ModelStats, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			<-start
+			results <- rl.Stats(model)
+		})
 	}
-	if !testEqual(5, stats.TPM) {
-		t.Fatal(testWantGotMessage(5, stats.TPM))
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	for stats := range results {
+		if !testEqual(0, stats.RPM) {
+			t.Fatal(testWantGotMessage(0, stats.RPM))
+		}
+		if !testEqual(0, stats.TPM) {
+			t.Fatal(testWantGotMessage(0, stats.TPM))
+		}
 	}
-	if !stats.DayStart.Equal(now) {
-		t.Fatal(testWantGotMessage(now, stats.DayStart))
+	if testContains(rl.State, model) {
+		t.Fatal(testNotContainsMessage(rl.State, model, "stale empty state should be pruned"))
 	}
 }
 
 func TestRatelimit_AllStats_Bad(t *testing.T) {
-	rl := newTestLimiter(t)
-	model := "allstats-stale-over-quota"
-	now := time.Unix(1_700_000_000, 0)
-	rl.now = func() time.Time { return now }
-	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 10, MaxRPD: 10}
-	rl.State[model] = &UsageStats{
-		Requests: []time.Time{now.Add(-2 * time.Minute)},
-		Tokens:   []TokenEntry{{Time: now.Add(-2 * time.Minute), Count: 10}},
-		DayStart: now,
+	rl, err := NewWithConfig(Config{
+		FilePath:  testPath(t.TempDir(), "empty-allstats.yaml"),
+		Providers: []Provider{ProviderLocal},
+	})
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
 	}
 
 	all := rl.AllStats()
-	stats := all[model]
-	if !testEqual(0, stats.RPM) {
-		t.Fatal(testWantGotMessage(0, stats.RPM))
-	}
-	if !testEqual(0, stats.TPM) {
-		t.Fatal(testWantGotMessage(0, stats.TPM))
+	if !testIsEmpty(all) {
+		t.Fatal(testEmptyMessage(all))
 	}
 }
 
 func TestRatelimit_AllStats_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
-	rl.State["allstats-nil"] = nil
+	model := "allstats-mutating"
+	rl.SetQuota(model, ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 1000})
+
+	var wg sync.WaitGroup
+	nilSnapshots := make(chan struct{}, 1)
+	for range 4 {
+		wg.Go(func() {
+			for i := range 50 {
+				rl.RecordUsage(model, i, 1)
+				rl.SetQuota(fmt.Sprintf("allstats-dynamic-%d", i), ModelQuota{MaxRPM: i + 1})
+			}
+		})
+		wg.Go(func() {
+			for range 50 {
+				all := rl.AllStats()
+				if testIsNil(all) {
+					select {
+					case nilSnapshots <- struct{}{}:
+					default:
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(nilSnapshots)
+
+	if _, ok := <-nilSnapshots; ok {
+		t.Fatal(testExpectedNonNilMessage())
+	}
 
 	all := rl.AllStats()
-	if !testContains(all, "allstats-nil") {
-		t.Fatal(testContainsMessage(all, "allstats-nil"))
-	}
-	stats := all["allstats-nil"]
-	if !testEqual(0, stats.RPM) {
-		t.Fatal(testWantGotMessage(0, stats.RPM))
-	}
-	if !testEqual(0, stats.TPM) {
-		t.Fatal(testWantGotMessage(0, stats.TPM))
+	if !testContains(all, model) {
+		t.Fatal(testContainsMessage(all, model))
 	}
 }
 
 func TestRatelimit_DefaultQuotas_Bad(t *testing.T) {
-	rl1 := newTestLimiter(t)
-	rl1.Quotas["gemini-3-pro-preview"] = ModelQuota{MaxRPM: 1, MaxTPM: 1, MaxRPD: 1}
-
-	rl2 := newTestLimiter(t)
-	q := rl2.Quotas["gemini-3-pro-preview"]
-	if !testEqual(150, q.MaxRPM) {
-		t.Fatal(testWantGotMessage(150, q.MaxRPM, "mutating one limiter must not corrupt later defaults"))
+	rl, err := NewWithConfig(Config{
+		FilePath:  testPath(t.TempDir(), "missing-provider.yaml"),
+		Providers: []Provider{Provider("missing-provider")},
+	})
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
 	}
-	if !testEqual(1000000, q.MaxTPM) {
-		t.Fatal(testWantGotMessage(1000000, q.MaxTPM))
+
+	if !testIsEmpty(rl.Quotas) {
+		t.Fatal(testEmptyMessage(rl.Quotas, "unknown provider should not silently load default quotas"))
 	}
 }
 
 func TestRatelimit_DefaultQuotas_Ugly(t *testing.T) {
 	rl := newTestLimiter(t)
-	model := "gemini-2.0-flash-lite"
+	model := "gemini-3-pro-preview"
 
-	for range 25 {
-		rl.RecordUsage(model, 1000000, 1000000)
+	rl.SetQuota(model, ModelQuota{MaxRPM: 1, MaxTPM: 10, MaxRPD: 1})
+	stats := rl.Stats(model)
+	if !testEqual(1, stats.MaxRPM) {
+		t.Fatal(testWantGotMessage(1, stats.MaxRPM))
 	}
-	if !rl.CanSend(model, maxInt()) {
-		t.Fatal(testExpectedTrueMessage("all-zero default quota should remain unlimited"))
+	if !testEqual(10, stats.MaxTPM) {
+		t.Fatal(testWantGotMessage(10, stats.MaxTPM))
+	}
+	if !testEqual(1, stats.MaxRPD) {
+		t.Fatal(testWantGotMessage(1, stats.MaxRPD))
+	}
+
+	rl.RecordUsage(model, 5, 5)
+	if rl.CanSend(model, 1) {
+		t.Fatal(testExpectedFalseMessage("restrictive SetQuota override should be enforced"))
+	}
+
+	rl.SetQuota(model, ModelQuota{MaxRPM: 2, MaxTPM: 20, MaxRPD: 2})
+	if !rl.CanSend(model, 1) {
+		t.Fatal(testExpectedTrueMessage("relaxed SetQuota override should propagate to decisions"))
 	}
 }
 
@@ -2826,22 +2980,32 @@ func TestRatelimit_PersistSkipsNilState_Ugly(t *testing.T) {
 }
 
 func TestRatelimit_TokenTotals_Bad(t *testing.T) {
-	if !testEqual(0, safeTokenSum(-10, -20)) {
-		t.Fatal(testWantGotMessage(0, safeTokenSum(-10, -20)))
+	if !testEqual(maxInt(), safeTokenSum(maxInt()-1, 1)) {
+		t.Fatal(testWantGotMessage(maxInt(), safeTokenSum(maxInt()-1, 1), "exact max boundary should be representable"))
 	}
-	if !testEqual(0, totalTokenCount([]TokenEntry{{Count: -1}, {Count: -2}})) {
-		t.Fatal(testWantGotMessage(0, totalTokenCount([]TokenEntry{{Count: -1}, {Count: -2}})))
+	if !testEqual(maxInt(), safeTokenSum(maxInt(), 1)) {
+		t.Fatal(testWantGotMessage(maxInt(), safeTokenSum(maxInt(), 1), "overflow should saturate"))
+	}
+	tokens := []TokenEntry{{Count: maxInt() - 2}, {Count: 1}, {Count: 2}}
+	if !testEqual(maxInt(), totalTokenCount(tokens)) {
+		t.Fatal(testWantGotMessage(maxInt(), totalTokenCount(tokens), "token totals should saturate at max int"))
 	}
 }
 
 func TestRatelimit_TokenTotals_Ugly(t *testing.T) {
 	tokens := []TokenEntry{
-		{Count: maxInt() - 1},
-		{Count: 10},
-		{Count: -100},
+		{},
+		{Count: 0},
+		{Count: 7},
+		{Count: -3},
+		{Count: 0},
+		{Count: 11},
 	}
-	if !testEqual(maxInt(), totalTokenCount(tokens)) {
-		t.Fatal(testWantGotMessage(maxInt(), totalTokenCount(tokens)))
+	if !testEqual(18, totalTokenCount(tokens)) {
+		t.Fatal(testWantGotMessage(18, totalTokenCount(tokens)))
+	}
+	if !testEqual(0, safeTokenSum(0, 0)) {
+		t.Fatal(testWantGotMessage(0, safeTokenSum(0, 0)))
 	}
 }
 

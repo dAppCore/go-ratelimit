@@ -97,6 +97,69 @@ func TestIter_Iterators_Good(t *testing.T) {
 	})
 }
 
+func TestIter_Iterators_Bad(t *testing.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath:  testPath(t.TempDir(), "iter-empty.yaml"),
+		Providers: []Provider{ProviderLocal},
+	})
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	var models []string
+	for model := range rl.Models() {
+		models = append(models, model)
+	}
+	if !testIsEmpty(models) {
+		t.Fatal(testEmptyMessage(models))
+	}
+
+	var iterated []string
+	for model := range rl.Iter() {
+		iterated = append(iterated, model)
+	}
+	if !testIsEmpty(iterated) {
+		t.Fatal(testEmptyMessage(iterated))
+	}
+}
+
+func TestIter_Iterators_Ugly(t *testing.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath: testPath(t.TempDir(), "iter-break.yaml"),
+		Quotas: map[string]ModelQuota{
+			"model-a": {MaxRPM: 10},
+			"model-b": {MaxRPM: 20},
+			"model-c": {MaxRPM: 30},
+			"model-d": {MaxRPM: 40},
+		},
+	})
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	var seen []string
+	for model := range rl.Models() {
+		seen = append(seen, model)
+		if len(seen) == 2 {
+			break
+		}
+	}
+	if !testEqual([]string{"model-a", "model-b"}, seen) {
+		t.Fatal(testWantGotMessage([]string{"model-a", "model-b"}, seen))
+	}
+
+	seen = nil
+	for model := range rl.Iter() {
+		seen = append(seen, model)
+		if len(seen) == 3 {
+			break
+		}
+	}
+	if !testEqual([]string{"model-a", "model-b", "model-c"}, seen) {
+		t.Fatal(testWantGotMessage([]string{"model-a", "model-b", "model-c"}, seen))
+	}
+}
+
 func TestIter_IterEarlyBreak_Good(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Quotas: map[string]ModelQuota{
