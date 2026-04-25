@@ -3,16 +3,16 @@
 package ratelimit
 
 import (
-	"context"
-	"io"
-	"io/fs"
-	"iter"
-	"maps"
-	"net/http"
-	"net/url"
-	"slices"
-	"sync"
-	"time"
+	"context"  // Note: intrinsic — cancellation propagation for background pruning and CountTokens HTTP requests; no core equivalent
+	"io"       // Note: intrinsic — Reader contract and bounded response body reads for CountTokens; no core equivalent
+	"io/fs"    // Note: intrinsic — fs.ErrNotExist distinguishes missing YAML state files; no core equivalent
+	"iter"     // Note: intrinsic — public lazy sequence API for Models and Iter; no core equivalent
+	"maps"     // Note: intrinsic — cloning and copying quota maps without bespoke loops; no core equivalent
+	"net/http" // Note: intrinsic — CountTokens must issue raw HTTP requests to Google's API; no core equivalent
+	"net/url"  // Note: intrinsic — CountTokens base URL parsing and model path escaping require url.URL semantics; no core equivalent
+	"slices"   // Note: intrinsic — cloning, sorting, pruning, and iterating rate-limit state slices; no core equivalent
+	"sync"     // Note: intrinsic — RWMutex protects shared in-memory limiter state; no core equivalent
+	"time"     // Note: intrinsic — sliding windows, daily quota periods, timers, and persisted timestamps; no core equivalent
 
 	core "dappco.re/go/core"
 	"gopkg.in/yaml.v3"
@@ -602,6 +602,11 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	decision := Decision{}
 
 	if estimatedTokens < 0 {
+		stats, ok := rl.State[model]
+		if !ok || stats == nil {
+			stats = &UsageStats{DayStart: now}
+			rl.State[model] = stats
+		}
 		decision.Allowed = false
 		decision.Code = DecisionInvalidTokens
 		decision.Reason = "estimated tokens must be non-negative"

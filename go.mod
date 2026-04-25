@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: EUPL-1.2
 
-module dappco.re/go/core/go-ratelimit
+module dappco.re/go/ratelimit
 
 go 1.26.0
 
 require (
 	dappco.re/go/core v0.8.0-alpha.1
-	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.47.0
+	gopkg.in/yaml.v3 v3.0.1 // Note: YAML parse for rate limit rules config; no core.* YAML parser.
+	modernc.org/sqlite v1.47.0 // Note: pure-Go SQLite for rate limit state persistence; no core.* SQLite driver.
 )
 
 require (
@@ -22,10 +22,4 @@ require (
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-)
-
-require (
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/stretchr/testify v1.11.1
 )
