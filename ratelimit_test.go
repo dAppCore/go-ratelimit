@@ -2331,3 +2331,15 @@ func TestRatelimit_EndToEndMultiProvider_Good(t *testing.T) {
 		t.Fatal(testWantGotMessage(1, reloaded.RPM, "state should survive persist/reload"))
 	}
 }
+
+func TestRatelimit_CanSend_Bad(t *testing.T) {
+	rl := newTestLimiter(t)
+	model := "cansend-rpm-over-limit"
+	rl.Quotas[model] = ModelQuota{MaxRPM: 2, MaxTPM: 1000000, MaxRPD: 100}
+
+	rl.RecordUsage(model, 10, 10)
+	rl.RecordUsage(model, 10, 10)
+	if rl.CanSend(model, 10) {
+		t.Fatal(testExpectedFalseMessage("should reject when RPM quota is exhausted"))
+	}
+}
