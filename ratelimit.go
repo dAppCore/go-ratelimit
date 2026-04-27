@@ -3,16 +3,15 @@
 package ratelimit
 
 import (
-	"context"
-	"io"
-	"io/fs"
-	"iter"
-	"maps"
-	"net/http"
-	"net/url"
-	"slices"
-	"sync"
-	"time"
+	"context"  // Note: intrinsic — cancellation propagation for background pruning and CountTokens HTTP requests; no core equivalent
+	"io"       // Note: intrinsic — Reader contract and bounded response body reads for CountTokens; no core equivalent
+	"io/fs"    // Note: intrinsic — fs.ErrNotExist distinguishes missing YAML state files; no core equivalent
+	"iter"     // Note: intrinsic — public lazy sequence API for Models and Iter; no core equivalent
+	"maps"     // Note: intrinsic — cloning and copying quota maps without bespoke loops; no core equivalent
+	"net/http" // Note: intrinsic — public CountTokens uses http.Client/Request; no core equivalent
+	"slices"   // Note: intrinsic — cloning, sorting, pruning, and iterating rate-limit state slices; no core equivalent
+	"sync"     // Note: intrinsic — RWMutex protects shared in-memory limiter state; no core equivalent
+	"time"     // Note: intrinsic — sliding windows, daily quota periods, timers, and persisted timestamps; no core equivalent
 
 	core "dappco.re/go/core"
 	"gopkg.in/yaml.v3"
@@ -42,6 +41,7 @@ const (
 	backendSQLite               = "sqlite"
 	countTokensErrorBodyLimit   = 8 * 1024
 	countTokensSuccessBodyLimit = 1 * 1024 * 1024
+	countTokensHTTPStatusOK     = 200
 )
 
 // ModelQuota defines the rate limits for a specific model.
@@ -117,6 +117,7 @@ type RateLimiter struct {
 	State    map[string]*UsageStats `yaml:"state"`
 	filePath string
 	sqlite   *sqliteStore // non-nil when backend is "sqlite"
+	now      func() time.Time
 }
 
 // DefaultProfiles returns pre-configured quota profiles for each provider.
@@ -331,6 +332,10 @@ func (rl *RateLimiter) Persist() error {
 // empty state for models that haven't been used recently.
 // Caller must hold lock.
 func (rl *RateLimiter) prune(model string) {
+	rl.pruneAt(model, rl.clockNow())
+}
+
+func (rl *RateLimiter) pruneAt(model string, now time.Time) {
 	stats, ok := rl.State[model]
 	if !ok {
 		return
@@ -340,17 +345,18 @@ func (rl *RateLimiter) prune(model string) {
 		return
 	}
 
-	now := time.Now()
 	window := now.Add(-1 * time.Minute)
+
+	normaliseFutureUsage(stats, now)
 
 	// Prune requests
 	stats.Requests = slices.DeleteFunc(stats.Requests, func(t time.Time) bool {
-		return t.Before(window)
+		return !t.After(window)
 	})
 
 	// Prune tokens
 	stats.Tokens = slices.DeleteFunc(stats.Tokens, func(t TokenEntry) bool {
-		return t.Time.Before(window)
+		return !t.Time.After(window)
 	})
 
 	// Reset daily counter if day has passed
@@ -414,18 +420,18 @@ func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int)
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	rl.prune(model) // Prune before recording to ensure we're not exceeding limits immediately after
+	now := rl.clockNow()
+	rl.pruneAt(model, now) // Prune before recording to ensure we're not exceeding limits immediately after
 	stats, ok := rl.State[model]
 	if !ok {
-		stats = &UsageStats{DayStart: time.Now()}
+		stats = &UsageStats{DayStart: now}
 		rl.State[model] = stats
 	}
 
-	now := time.Now()
 	totalTokens := safeTokenSum(promptTokens, outputTokens)
 	stats.Requests = append(stats.Requests, now)
 	stats.Tokens = append(stats.Tokens, TokenEntry{Time: now, Count: totalTokens})
-	stats.DayCount++
+	stats.DayCount = safeDayCountIncrement(stats.DayCount)
 }
 
 // WaitForCapacity blocks until capacity is available or context is cancelled.
@@ -598,10 +604,15 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	now := time.Now()
+	now := rl.clockNow()
 	decision := Decision{}
 
 	if estimatedTokens < 0 {
+		stats, ok := rl.State[model]
+		if !ok || stats == nil {
+			stats = &UsageStats{DayStart: now}
+			rl.State[model] = stats
+		}
 		decision.Allowed = false
 		decision.Code = DecisionInvalidTokens
 		decision.Reason = "estimated tokens must be non-negative"
@@ -626,7 +637,7 @@ func (rl *RateLimiter) Decide(model string, estimatedTokens int) Decision {
 		return decision
 	}
 
-	rl.prune(model)
+	rl.pruneAt(model, now)
 	stats, ok := rl.State[model]
 	if !ok || stats == nil {
 		stats = &UsageStats{DayStart: now}
@@ -801,7 +812,7 @@ func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, ap
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != countTokensHTTPStatusOK {
 		body, err := readLimitedBody(resp.Body, countTokensErrorBodyLimit)
 		if err != nil {
 			return 0, core.E("ratelimit.CountTokens", "read error body", err)
@@ -829,6 +840,7 @@ func newConfiguredRateLimiter(cfg Config) *RateLimiter {
 	rl := &RateLimiter{
 		Quotas: make(map[string]ModelQuota),
 		State:  make(map[string]*UsageStats),
+		now:    time.Now,
 	}
 	applyConfig(rl, cfg)
 	return rl
@@ -841,6 +853,13 @@ func ensureMaps(rl *RateLimiter) {
 	if rl.State == nil {
 		rl.State = make(map[string]*UsageStats)
 	}
+}
+
+func (rl *RateLimiter) clockNow() time.Time {
+	if rl.now != nil {
+		return rl.now()
+	}
+	return time.Now()
 }
 
 func applyConfig(rl *RateLimiter, cfg Config) {
@@ -898,25 +917,53 @@ func safeTokenSum(a, b int) int {
 	return safeTokenTotal([]TokenEntry{{Count: a}, {Count: b}})
 }
 
+func maxInt() int {
+	return int(^uint(0) >> 1)
+}
+
 func totalTokenCount(tokens []TokenEntry) int {
 	return safeTokenTotal(tokens)
 }
 
 func safeTokenTotal(tokens []TokenEntry) int {
-	const maxInt = int(^uint(0) >> 1)
-
 	total := 0
 	for _, token := range tokens {
 		count := token.Count
 		if count < 0 {
 			continue
 		}
-		if total > maxInt-count {
-			return maxInt
+		if total > maxInt()-count {
+			return maxInt()
 		}
 		total += count
 	}
 	return total
+}
+
+func safeDayCountIncrement(dayCount int) int {
+	if dayCount >= maxInt() {
+		return maxInt()
+	}
+	if dayCount < 0 {
+		return 1
+	}
+	return dayCount + 1
+}
+
+func normaliseFutureUsage(stats *UsageStats, now time.Time) {
+	for i, t := range stats.Requests {
+		if t.After(now) {
+			stats.Requests[i] = now
+		}
+	}
+	for i, token := range stats.Tokens {
+		if token.Time.After(now) {
+			stats.Tokens[i].Time = now
+		}
+	}
+	if stats.DayStart.After(now) {
+		stats.DayStart = now
+	}
 }
 
 func retryAfterForTokens(now time.Time, tokens []TokenEntry, maxTPM, estimatedTokens int) time.Duration {
@@ -924,7 +971,7 @@ func retryAfterForTokens(now time.Time, tokens []TokenEntry, maxTPM, estimatedTo
 		return 0
 	}
 
-	deficit := totalTokenCount(tokens) + estimatedTokens - maxTPM
+	deficit := safeTokenSum(totalTokenCount(tokens), estimatedTokens) - maxTPM
 	if deficit <= 0 {
 		return 0
 	}
@@ -955,15 +1002,29 @@ func countTokensURL(baseURL, model string) (string, error) {
 		return "", core.E("ratelimit.countTokensURL", "empty model", nil)
 	}
 
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
+	normalised := core.URLNormalize(baseURL)
+	if normalised == "" || !hasURLAuthority(normalised) {
 		return "", core.E("ratelimit.countTokensURL", "invalid base url", nil)
 	}
 
-	return core.Concat(core.TrimSuffix(parsed.String(), "/"), "/v1beta/models/", url.PathEscape(model), ":countTokens"), nil
+	return core.Concat(core.TrimSuffix(normalised, "/"), "/v1beta/models/", core.URLPathEscape(model), ":countTokens"), nil
+}
+
+func hasURLAuthority(rawURL string) bool {
+	parts := core.SplitN(rawURL, "://", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return false
+	}
+
+	remainder := parts[1]
+	if remainder == "" {
+		return false
+	}
+
+	authority := core.SplitN(remainder, "/", 2)[0]
+	authority = core.SplitN(authority, "?", 2)[0]
+	authority = core.SplitN(authority, "#", 2)[0]
+	return authority != ""
 }
 
 func readLimitedBody(r io.Reader, limit int64) (string, error) {

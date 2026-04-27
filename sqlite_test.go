@@ -3,12 +3,11 @@
 package ratelimit
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,25 +16,33 @@ import (
 func TestSQLite_NewSQLiteStore_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "test.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
 
 	// Verify the database file was created.
-	assert.True(t, pathExists(dbPath), "database file should exist")
+	if !pathExists(dbPath) {
+		t.Fatal(testExpectedTrueMessage("database file should exist"))
+	}
 }
 
 func TestSQLite_NewSQLiteStore_Bad(t *testing.T) {
 	t.Run("invalid path returns error", func(t *testing.T) {
 		// Path inside a non-existent directory with no parent.
 		_, err := newSQLiteStore("/nonexistent/deep/nested/dir/test.db")
-		assert.Error(t, err, "should fail with invalid path")
+		if err == nil {
+			t.Fatal(testExpectedErrorMessage("should fail with invalid path"))
+		}
 	})
 }
 
 func TestSQLite_QuotasRoundTrip_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "quotas.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
 
 	quotas := map[string]ModelQuota{
@@ -43,51 +50,81 @@ func TestSQLite_QuotasRoundTrip_Good(t *testing.T) {
 		"model-b": {MaxRPM: 200, MaxTPM: 100000, MaxRPD: 2000},
 		"model-c": {MaxRPM: 0, MaxTPM: 0, MaxRPD: 0}, // Unlimited
 	}
-
-	require.NoError(t, store.saveQuotas(quotas))
+	if err := store.saveQuotas(quotas); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	loaded, err := store.loadQuotas()
-	require.NoError(t, err)
-
-	assert.Equal(t, len(quotas), len(loaded), "should load same number of quotas")
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testEqual(len(quotas), len(loaded)) {
+		t.Fatal(testWantGotMessage(len(quotas), len(loaded), "should load same number of quotas"))
+	}
 	for model, expected := range quotas {
 		actual, ok := loaded[model]
-		require.True(t, ok, "loaded quotas should contain %s", model)
-		assert.Equal(t, expected.MaxRPM, actual.MaxRPM)
-		assert.Equal(t, expected.MaxTPM, actual.MaxTPM)
-		assert.Equal(t, expected.MaxRPD, actual.MaxRPD)
+		if !ok {
+			t.Fatal(testExpectedTrueMessage(fmt.Sprintf("loaded quotas should contain %s", model)))
+		}
+		if !testEqual(expected.MaxRPM, actual.MaxRPM) {
+			t.Fatal(testWantGotMessage(expected.MaxRPM, actual.MaxRPM))
+		}
+		if !testEqual(expected.MaxTPM, actual.MaxTPM) {
+			t.Fatal(testWantGotMessage(expected.MaxTPM, actual.MaxTPM))
+		}
+		if !testEqual(expected.MaxRPD, actual.MaxRPD) {
+			t.Fatal(testWantGotMessage(expected.MaxRPD, actual.MaxRPD))
+		}
 	}
 }
 
 func TestSQLite_QuotasOverwrite_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "overwrite.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
+	if err :=
 
-	// Save initial quotas.
-	require.NoError(t, store.saveQuotas(map[string]ModelQuota{
-		"model-a": {MaxRPM: 100, MaxTPM: 50000, MaxRPD: 1000},
-	}))
+		// Save initial quotas.
+		store.saveQuotas(map[string]ModelQuota{
+			"model-a": {MaxRPM: 100, MaxTPM: 50000, MaxRPD: 1000},
+		}); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err :=
 
-	// Save a second snapshot with updated values.
-	require.NoError(t, store.saveQuotas(map[string]ModelQuota{
-		"model-a": {MaxRPM: 999, MaxTPM: 888, MaxRPD: 777},
-	}))
+		// Save a second snapshot with updated values.
+		store.saveQuotas(map[string]ModelQuota{
+			"model-a": {MaxRPM: 999, MaxTPM: 888, MaxRPD: 777},
+		}); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	loaded, err := store.loadQuotas()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	q := loaded["model-a"]
-	assert.Equal(t, 999, q.MaxRPM, "should have updated RPM")
-	assert.Equal(t, 888, q.MaxTPM, "should have updated TPM")
-	assert.Equal(t, 777, q.MaxRPD, "should have updated RPD")
+	if !testEqual(999, q.MaxRPM) {
+		t.Fatal(testWantGotMessage(999, q.MaxRPM, "should have updated RPM"))
+	}
+	if !testEqual(888, q.MaxTPM) {
+		t.Fatal(testWantGotMessage(888, q.MaxTPM, "should have updated TPM"))
+	}
+	if !testEqual(777, q.MaxRPD) {
+		t.Fatal(testWantGotMessage(777, q.MaxRPD, "should have updated RPD"))
+	}
 }
 
 func TestSQLite_StateRoundTrip_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "state.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
 
 	now := time.Now()
@@ -114,31 +151,50 @@ func TestSQLite_StateRoundTrip_Good(t *testing.T) {
 			DayCount: 1,
 		},
 	}
-
-	require.NoError(t, store.saveState(state))
+	if err := store.saveState(state); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	loaded, err := store.loadState()
-	require.NoError(t, err)
-
-	assert.Equal(t, len(state), len(loaded), "should load same number of models")
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testEqual(len(state), len(loaded)) {
+		t.Fatal(testWantGotMessage(len(state), len(loaded), "should load same number of models"))
+	}
 
 	for model, expected := range state {
 		actual, ok := loaded[model]
-		require.True(t, ok, "loaded state should contain %s", model)
-
-		assert.Len(t, actual.Requests, len(expected.Requests), "request count for %s", model)
-		assert.Len(t, actual.Tokens, len(expected.Tokens), "token count for %s", model)
-		assert.Equal(t, expected.DayCount, actual.DayCount, "day count for %s", model)
+		if !ok {
+			t.Fatal(testExpectedTrueMessage(fmt.Sprintf("loaded state should contain %s", model)))
+		}
+		if !testHasLen(actual.Requests, len(expected.Requests)) {
+			t.Fatal(testLenMessage(actual.Requests, len(expected.Requests), fmt.Sprintf("request count for %s", model)))
+		}
+		if !testHasLen(actual.Tokens, len(expected.Tokens)) {
+			t.Fatal(testLenMessage(actual.Tokens, len(expected.Tokens), fmt.Sprintf("token count for %s", model)))
+		}
+		if !testEqual(expected.DayCount, actual.DayCount) {
+			t.Fatal(testWantGotMessage(expected.DayCount, actual.DayCount, fmt.Sprintf("day count for %s", model)))
+		}
 
 		// Time comparison with nanosecond precision (UnixNano round-trip).
-		assert.Equal(t, expected.DayStart.UnixNano(), actual.DayStart.UnixNano(), "day start for %s", model)
+		if !testEqual(expected.DayStart.UnixNano(), actual.DayStart.UnixNano()) {
+			t.Fatal(testWantGotMessage(expected.DayStart.UnixNano(), actual.DayStart.UnixNano(), fmt.Sprintf("day start for %s", model)))
+		}
 
 		for i, req := range expected.Requests {
-			assert.Equal(t, req.UnixNano(), actual.Requests[i].UnixNano(), "request %d for %s", i, model)
+			if !testEqual(req.UnixNano(), actual.Requests[i].UnixNano()) {
+				t.Fatal(testWantGotMessage(req.UnixNano(), actual.Requests[i].UnixNano(), fmt.Sprintf("request %d for %s", i, model)))
+			}
 		}
 		for i, tok := range expected.Tokens {
-			assert.Equal(t, tok.Time.UnixNano(), actual.Tokens[i].Time.UnixNano(), "token time %d for %s", i, model)
-			assert.Equal(t, tok.Count, actual.Tokens[i].Count, "token count %d for %s", i, model)
+			if !testEqual(tok.Time.UnixNano(), actual.Tokens[i].Time.UnixNano()) {
+				t.Fatal(testWantGotMessage(tok.Time.UnixNano(), actual.Tokens[i].Time.UnixNano(), fmt.Sprintf("token time %d for %s", i, model)))
+			}
+			if !testEqual(tok.Count, actual.Tokens[i].Count) {
+				t.Fatal(testWantGotMessage(tok.Count, actual.Tokens[i].Count, fmt.Sprintf("token count %d for %s", i, model)))
+			}
 		}
 	}
 }
@@ -146,63 +202,94 @@ func TestSQLite_StateRoundTrip_Good(t *testing.T) {
 func TestSQLite_StateOverwrite_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "overwrite.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
 
 	now := time.Now()
+	if err :=
 
-	// Save initial state.
-	require.NoError(t, store.saveState(map[string]*UsageStats{
-		"model-a": {
-			Requests: []time.Time{now, now, now},
-			DayStart: now,
-			DayCount: 3,
-		},
-	}))
+		// Save initial state.
+		store.saveState(map[string]*UsageStats{
+			"model-a": {
+				Requests: []time.Time{now, now, now},
+				DayStart: now,
+				DayCount: 3,
+			},
+		}); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err :=
 
-	// Save new state (should replace).
-	require.NoError(t, store.saveState(map[string]*UsageStats{
-		"model-b": {
-			Requests: []time.Time{now},
-			DayStart: now,
-			DayCount: 1,
-		},
-	}))
+		// Save new state (should replace).
+		store.saveState(map[string]*UsageStats{
+			"model-b": {
+				Requests: []time.Time{now},
+				DayStart: now,
+				DayCount: 1,
+			},
+		}); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	loaded, err := store.loadState()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	_, hasA := loaded["model-a"]
-	assert.False(t, hasA, "model-a should have been deleted on overwrite")
+	if hasA {
+		t.Fatal(testExpectedFalseMessage("model-a should have been deleted on overwrite"))
+	}
 
 	b, hasB := loaded["model-b"]
-	require.True(t, hasB, "model-b should exist")
-	assert.Equal(t, 1, b.DayCount)
-	assert.Len(t, b.Requests, 1)
+	if !hasB {
+		t.Fatal(testExpectedTrueMessage("model-b should exist"))
+	}
+	if !testEqual(1, b.DayCount) {
+		t.Fatal(testWantGotMessage(1, b.DayCount))
+	}
+	if !testHasLen(b.Requests, 1) {
+		t.Fatal(testLenMessage(b.Requests, 1))
+	}
 }
 
 func TestSQLite_EmptyState_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "empty.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
 
 	// Load from empty database.
 	quotas, err := store.loadQuotas()
-	require.NoError(t, err)
-	assert.Empty(t, quotas, "should return empty quotas from fresh DB")
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testIsEmpty(quotas) {
+		t.Fatal(testEmptyMessage(quotas, "should return empty quotas from fresh DB"))
+	}
 
 	state, err := store.loadState()
-	require.NoError(t, err)
-	assert.Empty(t, state, "should return empty state from fresh DB")
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testIsEmpty(state) {
+		t.Fatal(testEmptyMessage(state, "should return empty state from fresh DB"))
+	}
 }
 
 func TestSQLite_Close_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "close.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
-
-	require.NoError(t, store.close(), "first close should succeed")
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := store.close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err, "first close should succeed"))
+	}
 }
 
 // --- Phase 2: SQLite integration tests ---
@@ -210,15 +297,22 @@ func TestSQLite_Close_Good(t *testing.T) {
 func TestSQLite_NewWithSQLite_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "limiter.db")
 	rl, err := NewWithSQLite(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl.Close()
 
 	// Should have Gemini defaults.
 	_, hasGemini := rl.Quotas["gemini-3-pro-preview"]
-	assert.True(t, hasGemini, "should have Gemini defaults")
+	if !hasGemini {
+		t.Fatal(testExpectedTrueMessage("should have Gemini defaults"))
+	}
+	if
 
 	// SQLite backend should be set.
-	assert.NotNil(t, rl.sqlite, "SQLite store should be initialised")
+	testIsNil(rl.sqlite) {
+		t.Fatal(testExpectedNonNilMessage("SQLite store should be initialised"))
+	}
 }
 
 func TestSQLite_NewWithSQLiteConfig_Good(t *testing.T) {
@@ -229,46 +323,74 @@ func TestSQLite_NewWithSQLiteConfig_Good(t *testing.T) {
 			"custom-model": {MaxRPM: 10, MaxTPM: 1000, MaxRPD: 50},
 		},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl.Close()
 
 	_, hasClaude := rl.Quotas["claude-opus-4"]
-	assert.True(t, hasClaude, "should have Anthropic models")
+	if !hasClaude {
+		t.Fatal(testExpectedTrueMessage("should have Anthropic models"))
+	}
 
 	_, hasCustom := rl.Quotas["custom-model"]
-	assert.True(t, hasCustom, "should have custom model")
+	if !hasCustom {
+		t.Fatal(testExpectedTrueMessage("should have custom model"))
+	}
 
 	_, hasGemini := rl.Quotas["gemini-3-pro-preview"]
-	assert.False(t, hasGemini, "should not have Gemini models")
+	if hasGemini {
+		t.Fatal(testExpectedFalseMessage("should not have Gemini models"))
+	}
 }
 
 func TestSQLite_PersistAndLoad_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "persist.db")
 	rl, err := NewWithSQLite(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	model := "persist-test"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 50, MaxTPM: 5000, MaxRPD: 500}
 	rl.RecordUsage(model, 100, 200)
 	rl.RecordUsage(model, 50, 50)
-
-	require.NoError(t, rl.Persist())
-	require.NoError(t, rl.Close())
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := rl.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Reload from same database.
 	rl2, err := NewWithSQLite(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
-
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	stats := rl2.Stats(model)
-	assert.Equal(t, 2, stats.RPM, "should have 2 requests after reload")
-	assert.Equal(t, 400, stats.TPM, "should have 100+200+50+50=400 tokens after reload")
-	assert.Equal(t, 2, stats.RPD, "should have 2 daily requests after reload")
-	assert.Equal(t, 50, stats.MaxRPM, "quota should be persisted")
-	assert.Equal(t, 5000, stats.MaxTPM)
-	assert.Equal(t, 500, stats.MaxRPD)
+	if !testEqual(2, stats.RPM) {
+		t.Fatal(testWantGotMessage(2, stats.RPM, "should have 2 requests after reload"))
+	}
+	if !testEqual(400, stats.TPM) {
+		t.Fatal(testWantGotMessage(400, stats.TPM, "should have 100+200+50+50=400 tokens after reload"))
+	}
+	if !testEqual(2, stats.RPD) {
+		t.Fatal(testWantGotMessage(2, stats.RPD, "should have 2 daily requests after reload"))
+	}
+	if !testEqual(50, stats.MaxRPM) {
+		t.Fatal(testWantGotMessage(50, stats.MaxRPM, "quota should be persisted"))
+	}
+	if !testEqual(5000, stats.MaxTPM) {
+		t.Fatal(testWantGotMessage(5000, stats.MaxTPM))
+	}
+	if !testEqual(500, stats.MaxRPD) {
+		t.Fatal(testWantGotMessage(500, stats.MaxRPD))
+	}
 }
 
 func TestSQLite_PersistMultipleModels_Good(t *testing.T) {
@@ -276,35 +398,53 @@ func TestSQLite_PersistMultipleModels_Good(t *testing.T) {
 	rl, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini, ProviderAnthropic},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl.RecordUsage("gemini-3-pro-preview", 500, 500)
 	rl.RecordUsage("claude-opus-4", 200, 200)
-
-	require.NoError(t, rl.Persist())
-	require.NoError(t, rl.Close())
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := rl.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl2, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini, ProviderAnthropic},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
-
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	gemini := rl2.Stats("gemini-3-pro-preview")
-	assert.Equal(t, 1, gemini.RPM)
-	assert.Equal(t, 1000, gemini.TPM)
+	if !testEqual(1, gemini.RPM) {
+		t.Fatal(testWantGotMessage(1, gemini.RPM))
+	}
+	if !testEqual(1000, gemini.TPM) {
+		t.Fatal(testWantGotMessage(1000, gemini.TPM))
+	}
 
 	claude := rl2.Stats("claude-opus-4")
-	assert.Equal(t, 1, claude.RPM)
-	assert.Equal(t, 400, claude.TPM)
+	if !testEqual(1, claude.RPM) {
+		t.Fatal(testWantGotMessage(1, claude.RPM))
+	}
+	if !testEqual(400, claude.TPM) {
+		t.Fatal(testWantGotMessage(400, claude.TPM))
+	}
 }
 
 func TestSQLite_RecordUsageThenPersistReload_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "record.db")
 	rl, err := NewWithSQLite(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	model := "test-model"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 100000, MaxRPD: 1000}
@@ -313,36 +453,55 @@ func TestSQLite_RecordUsageThenPersistReload_Good(t *testing.T) {
 	for range 10 {
 		rl.RecordUsage(model, 50, 50)
 	}
-
-	require.NoError(t, rl.Persist())
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Verify CanSend works correctly with persisted state.
 	stats := rl.Stats(model)
-	assert.Equal(t, 10, stats.RPM)
-	assert.Equal(t, 1000, stats.TPM) // 10 * (50+50) = 1000
-	assert.Equal(t, 10, stats.RPD)
-
-	require.NoError(t, rl.Close())
+	if !testEqual(10, stats.RPM) {
+		t.Fatal(testWantGotMessage(10, stats.RPM))
+	}
+	if !testEqual(1000, stats.TPM) {
+		t.Fatal(testWantGotMessage(1000, stats.TPM))
+	} // 10 * (50+50) = 1000
+	if !testEqual(10, stats.RPD) {
+		t.Fatal(testWantGotMessage(10, stats.RPD))
+	}
+	if err := rl.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Reload and verify.
 	rl2, err := NewWithSQLite(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
 
 	rl2.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 100000, MaxRPD: 1000}
-	require.NoError(t, rl2.Load())
-
-	assert.True(t, rl2.CanSend(model, 100), "should be able to send after reload")
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !rl2.CanSend(model, 100) {
+		t.Fatal(testExpectedTrueMessage("should be able to send after reload"))
+	}
 
 	stats2 := rl2.Stats(model)
-	assert.Equal(t, 10, stats2.RPM, "RPM should survive reload")
-	assert.Equal(t, 1000, stats2.TPM, "TPM should survive reload")
+	if !testEqual(10, stats2.RPM) {
+		t.Fatal(testWantGotMessage(10, stats2.RPM, "RPM should survive reload"))
+	}
+	if !testEqual(1000, stats2.TPM) {
+		t.Fatal(testWantGotMessage(1000, stats2.TPM, "TPM should survive reload"))
+	}
 }
 
 func TestSQLite_CloseNoOp_Good(t *testing.T) {
 	// Close on YAML-backed limiter is a no-op.
 	rl := newTestLimiter(t)
-	assert.NoError(t, rl.Close(), "Close on YAML limiter should be no-op")
+	if err := rl.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err, "Close on YAML limiter should be no-op"))
+	}
 }
 
 // --- Phase 2: Concurrent SQLite ---
@@ -350,7 +509,9 @@ func TestSQLite_CloseNoOp_Good(t *testing.T) {
 func TestSQLite_Concurrent_Good(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "concurrent.db")
 	rl, err := NewWithSQLite(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl.Close()
 
 	model := "concurrent-sqlite"
@@ -376,23 +537,36 @@ func TestSQLite_Concurrent_Good(t *testing.T) {
 
 	// All recordings should be counted.
 	stats := rl.Stats(model)
-	assert.Equal(t, goroutines*opsPerGoroutine, stats.RPD,
-		"all recordings should be counted despite concurrent operations")
+	if !testEqual(goroutines*opsPerGoroutine, stats.RPD) {
+		t.Fatal(testWantGotMessage(goroutines*opsPerGoroutine, stats.RPD,
+			"all recordings should be counted despite concurrent operations"))
+	}
+	if err :=
 
-	// Verify the final persisted state survives a reload.
-	require.NoError(t, rl.Persist())
-	require.NoError(t, rl.Close())
+		// Verify the final persisted state survives a reload.
+		rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := rl.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl2, err := NewWithSQLite(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
 
 	rl2.Quotas[model] = ModelQuota{MaxRPM: 100000, MaxTPM: 1000000000, MaxRPD: 100000}
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	stats2 := rl2.Stats(model)
-	assert.Equal(t, goroutines*opsPerGoroutine, stats2.RPD,
-		"all recordings should survive persist+reload")
+	if !testEqual(goroutines*opsPerGoroutine, stats2.RPD) {
+		t.Fatal(testWantGotMessage(goroutines*opsPerGoroutine, stats2.RPD,
+			"all recordings should survive persist+reload"))
+	}
 }
 
 // --- Phase 2: YAML backward compatibility ---
@@ -403,25 +577,38 @@ func TestSQLite_YAMLBackwardCompat_Good(t *testing.T) {
 	path := testPath(tmpDir, "compat.yaml")
 
 	rl1, err := New()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	rl1.filePath = path
 
 	model := "compat-test"
 	rl1.Quotas[model] = ModelQuota{MaxRPM: 50, MaxTPM: 5000, MaxRPD: 500}
 	rl1.RecordUsage(model, 100, 100)
-
-	require.NoError(t, rl1.Persist())
-	require.NoError(t, rl1.Close()) // No-op for YAML
+	if err := rl1.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := rl1.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	} // No-op for YAML
 
 	// Reload.
 	rl2, err := New()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	rl2.filePath = path
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	stats := rl2.Stats(model)
-	assert.Equal(t, 1, stats.RPM)
-	assert.Equal(t, 200, stats.TPM)
+	if !testEqual(1, stats.RPM) {
+		t.Fatal(testWantGotMessage(1, stats.RPM))
+	}
+	if !testEqual(200, stats.TPM) {
+		t.Fatal(testWantGotMessage(200, stats.TPM))
+	}
 }
 
 func TestSQLite_ConfigBackendDefault_Good(t *testing.T) {
@@ -429,9 +616,12 @@ func TestSQLite_ConfigBackendDefault_Good(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		FilePath: testPath(t.TempDir(), "default.yaml"),
 	})
-	require.NoError(t, err)
-
-	assert.Nil(t, rl.sqlite, "empty backend should use YAML (no sqlite)")
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testIsNil(rl.sqlite) {
+		t.Fatal(testExpectedNilMessage(rl.sqlite, "empty backend should use YAML (no sqlite)"))
+	}
 }
 
 func TestSQLite_ConfigBackendSQLite_Good(t *testing.T) {
@@ -443,14 +633,20 @@ func TestSQLite_ConfigBackendSQLite_Good(t *testing.T) {
 			"backend-model": {MaxRPM: 10, MaxTPM: 1000, MaxRPD: 50},
 		},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl.Close()
-
-	require.NotNil(t, rl.sqlite)
+	if testIsNil(rl.sqlite) {
+		t.Fatal(testExpectedNonNilMessage())
+	}
 	rl.RecordUsage("backend-model", 10, 10)
-	require.NoError(t, rl.Persist())
-
-	assert.True(t, pathExists(dbPath), "sqlite backend should persist to the configured DB path")
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !pathExists(dbPath) {
+		t.Fatal(testExpectedTrueMessage("sqlite backend should persist to the configured DB path"))
+	}
 }
 
 func TestSQLite_ConfigBackendSQLiteDefaultPath_Good(t *testing.T) {
@@ -462,13 +658,19 @@ func TestSQLite_ConfigBackendSQLiteDefaultPath_Good(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Backend: backendSQLite,
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl.Close()
-
-	require.NotNil(t, rl.sqlite)
-	require.NoError(t, rl.Persist())
-
-	assert.True(t, pathExists(testPath(home, defaultStateDirName, defaultSQLiteStateFile)), "sqlite backend should use the default home DB path")
+	if testIsNil(rl.sqlite) {
+		t.Fatal(testExpectedNonNilMessage())
+	}
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !pathExists(testPath(home, defaultStateDirName, defaultSQLiteStateFile)) {
+		t.Fatal(testExpectedTrueMessage("sqlite backend should use the default home DB path"))
+	}
 }
 
 // --- Phase 2: MigrateYAMLToSQLite ---
@@ -480,42 +682,67 @@ func TestSQLite_MigrateYAMLToSQLite_Good(t *testing.T) {
 
 	// Create a YAML-backed limiter with state.
 	rl, err := New()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	rl.filePath = yamlPath
 
 	model := "migrate-test"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 42, MaxTPM: 9999, MaxRPD: 100}
 	rl.RecordUsage(model, 200, 300)
 	rl.RecordUsage(model, 100, 100)
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err :=
 
-	require.NoError(t, rl.Persist())
-
-	// Migrate.
-	require.NoError(t, MigrateYAMLToSQLite(yamlPath, sqlitePath))
+		// Migrate.
+		MigrateYAMLToSQLite(yamlPath, sqlitePath); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Verify by loading from SQLite.
 	rl2, err := NewWithSQLite(sqlitePath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
-
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	q, ok := rl2.Quotas[model]
-	require.True(t, ok, "migrated quota should exist")
-	assert.Equal(t, 42, q.MaxRPM)
-	assert.Equal(t, 9999, q.MaxTPM)
-	assert.Equal(t, 100, q.MaxRPD)
+	if !ok {
+		t.Fatal(testExpectedTrueMessage("migrated quota should exist"))
+	}
+	if !testEqual(42, q.MaxRPM) {
+		t.Fatal(testWantGotMessage(42, q.MaxRPM))
+	}
+	if !testEqual(9999, q.MaxTPM) {
+		t.Fatal(testWantGotMessage(9999, q.MaxTPM))
+	}
+	if !testEqual(100, q.MaxRPD) {
+		t.Fatal(testWantGotMessage(100, q.MaxRPD))
+	}
 
 	stats := rl2.Stats(model)
-	assert.Equal(t, 2, stats.RPM, "should have 2 requests after migration")
-	assert.Equal(t, 700, stats.TPM, "should have 200+300+100+100=700 tokens")
-	assert.Equal(t, 2, stats.RPD, "should have 2 daily requests")
+	if !testEqual(2, stats.RPM) {
+		t.Fatal(testWantGotMessage(2, stats.RPM, "should have 2 requests after migration"))
+	}
+	if !testEqual(700, stats.TPM) {
+		t.Fatal(testWantGotMessage(700, stats.TPM, "should have 200+300+100+100=700 tokens"))
+	}
+	if !testEqual(2, stats.RPD) {
+		t.Fatal(testWantGotMessage(2, stats.RPD, "should have 2 daily requests"))
+	}
 }
 
 func TestSQLite_MigrateYAMLToSQLite_Bad(t *testing.T) {
 	t.Run("non-existent YAML file", func(t *testing.T) {
 		err := MigrateYAMLToSQLite("/nonexistent/state.yaml", testPath(t.TempDir(), "out.db"))
-		assert.Error(t, err, "should fail with non-existent YAML file")
+		if err == nil {
+			t.Fatal(testExpectedErrorMessage("should fail with non-existent YAML file"))
+		}
 	})
 
 	t.Run("corrupt YAML file", func(t *testing.T) {
@@ -524,7 +751,9 @@ func TestSQLite_MigrateYAMLToSQLite_Bad(t *testing.T) {
 		writeTestFile(t, yamlPath, "{{{{not yaml!")
 
 		err := MigrateYAMLToSQLite(yamlPath, testPath(tmpDir, "out.db"))
-		assert.Error(t, err, "should fail with corrupt YAML")
+		if err == nil {
+			t.Fatal(testExpectedErrorMessage("should fail with corrupt YAML"))
+		}
 	})
 }
 
@@ -535,7 +764,9 @@ func TestSQLite_MigrateYAMLToSQLiteAtomic_Good(t *testing.T) {
 	now := time.Now().UTC()
 
 	store, err := newSQLiteStore(sqlitePath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	originalQuotas := map[string]ModelQuota{
 		"old-model": {MaxRPM: 1, MaxTPM: 2, MaxRPD: 3},
@@ -548,12 +779,18 @@ func TestSQLite_MigrateYAMLToSQLiteAtomic_Good(t *testing.T) {
 			DayCount: 1,
 		},
 	}
-	require.NoError(t, store.saveSnapshot(originalQuotas, originalState))
+	if err := store.saveSnapshot(originalQuotas, originalState); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	_, err = store.db.Exec(`CREATE TRIGGER fail_daily_migrate BEFORE INSERT ON daily
 		BEGIN SELECT RAISE(ABORT, 'forced daily failure'); END`)
-	require.NoError(t, err)
-	require.NoError(t, store.close())
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := store.close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	migrated := &RateLimiter{
 		Quotas: map[string]ModelQuota{
@@ -569,26 +806,46 @@ func TestSQLite_MigrateYAMLToSQLiteAtomic_Good(t *testing.T) {
 		},
 	}
 	data, err := yaml.Marshal(migrated)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	writeTestFile(t, yamlPath, string(data))
 
 	err = MigrateYAMLToSQLite(yamlPath, sqlitePath)
-	require.Error(t, err)
+	if err == nil {
+		t.Fatal(testExpectedErrorMessage())
+	}
 
 	store, err = newSQLiteStore(sqlitePath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
 
 	quotas, err := store.loadQuotas()
-	require.NoError(t, err)
-	assert.Equal(t, originalQuotas, quotas)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testEqual(originalQuotas, quotas) {
+		t.Fatal(testWantGotMessage(originalQuotas, quotas))
+	}
 
 	state, err := store.loadState()
-	require.NoError(t, err)
-	require.Contains(t, state, "old-model")
-	assert.Equal(t, originalState["old-model"].DayCount, state["old-model"].DayCount)
-	assert.Equal(t, originalState["old-model"].Tokens[0].Count, state["old-model"].Tokens[0].Count)
-	assert.NotContains(t, state, "new-model")
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testContains(state, "old-model") {
+		t.Fatal(testContainsMessage(state, "old-model"))
+	}
+	if !testEqual(originalState["old-model"].DayCount, state["old-model"].DayCount) {
+		t.Fatal(testWantGotMessage(originalState["old-model"].DayCount, state["old-model"].DayCount))
+	}
+	if !testEqual(originalState["old-model"].Tokens[0].Count, state["old-model"].Tokens[0].Count) {
+		t.Fatal(testWantGotMessage(originalState["old-model"].Tokens[0].Count, state["old-model"].Tokens[0].Count))
+	}
+	if testContains(state, "new-model") {
+		t.Fatal(testNotContainsMessage(state, "new-model"))
+	}
 }
 
 func TestSQLite_MigrateYAMLToSQLitePreservesAllGeminiModels_Good(t *testing.T) {
@@ -598,26 +855,38 @@ func TestSQLite_MigrateYAMLToSQLitePreservesAllGeminiModels_Good(t *testing.T) {
 
 	// Create a full YAML state with all Gemini models.
 	rl, err := New()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	rl.filePath = yamlPath
 
 	for model := range rl.Quotas {
 		rl.RecordUsage(model, 10, 10)
 	}
-
-	require.NoError(t, rl.Persist())
-	require.NoError(t, MigrateYAMLToSQLite(yamlPath, sqlitePath))
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := MigrateYAMLToSQLite(yamlPath, sqlitePath); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl2, err := NewWithSQLite(sqlitePath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
-
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	for model := range rl.Quotas {
 		q, ok := rl2.Quotas[model]
-		require.True(t, ok, "migrated quota should exist for %s", model)
-		assert.Equal(t, rl.Quotas[model], q, "quota values should match for %s", model)
+		if !ok {
+			t.Fatal(testExpectedTrueMessage(fmt.Sprintf("migrated quota should exist for %s", model)))
+		}
+		if !testEqual(rl.Quotas[model], q) {
+			t.Fatal(testWantGotMessage(rl.Quotas[model], q, fmt.Sprintf("quota values should match for %s", model)))
+		}
 	}
 }
 
@@ -634,15 +903,20 @@ func TestSQLite_CorruptDB_Ugly(t *testing.T) {
 	// but operations on it should fail gracefully.
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
-		// If open itself fails, that's acceptable recovery.
-		assert.Contains(t, err.Error(), "ratelimit")
+		if !testContains(
+			// If open itself fails, that's acceptable recovery.
+			err.Error(), "ratelimit") {
+			t.Fatal(testContainsMessage(err.Error(), "ratelimit"))
+		}
 		return
 	}
 	defer store.close()
 
 	// Try to load quotas -- should fail gracefully.
 	_, err = store.loadQuotas()
-	assert.Error(t, err, "loading from corrupt DB should return an error")
+	if err == nil {
+		t.Fatal(testExpectedErrorMessage("loading from corrupt DB should return an error"))
+	}
 }
 
 func TestSQLite_TruncatedDB_Ugly(t *testing.T) {
@@ -651,11 +925,17 @@ func TestSQLite_TruncatedDB_Ugly(t *testing.T) {
 
 	// Create a valid DB first.
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
-	require.NoError(t, store.saveQuotas(map[string]ModelQuota{
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := store.saveQuotas(map[string]ModelQuota{
 		"test": {MaxRPM: 1},
-	}))
-	require.NoError(t, store.close())
+	}); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := store.close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Truncate the file to simulate corruption.
 	overwriteTestFile(t, dbPath, "TRUNC")
@@ -663,20 +943,26 @@ func TestSQLite_TruncatedDB_Ugly(t *testing.T) {
 	// Opening should either fail or operations should fail.
 	store2, err := newSQLiteStore(dbPath)
 	if err != nil {
-		assert.Contains(t, err.Error(), "ratelimit")
+		if !testContains(err.Error(), "ratelimit") {
+			t.Fatal(testContainsMessage(err.Error(), "ratelimit"))
+		}
 		return
 	}
 	defer store2.close()
 
 	_, err = store2.loadQuotas()
-	assert.Error(t, err, "loading from truncated DB should return an error")
+	if err == nil {
+		t.Fatal(testExpectedErrorMessage("loading from truncated DB should return an error"))
+	}
 }
 
 func TestSQLite_EmptyModelState_Good(t *testing.T) {
 	// State with no requests or tokens but with a daily counter.
 	dbPath := testPath(t.TempDir(), "empty-state.db")
 	store, err := newSQLiteStore(dbPath)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer store.close()
 
 	now := time.Now()
@@ -686,17 +972,28 @@ func TestSQLite_EmptyModelState_Good(t *testing.T) {
 			DayCount: 5,
 		},
 	}
-
-	require.NoError(t, store.saveState(state))
+	if err := store.saveState(state); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	loaded, err := store.loadState()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	s, ok := loaded["empty-model"]
-	require.True(t, ok)
-	assert.Equal(t, 5, s.DayCount)
-	assert.Empty(t, s.Requests, "should have no requests")
-	assert.Empty(t, s.Tokens, "should have no tokens")
+	if !ok {
+		t.Fatal(testExpectedTrueMessage())
+	}
+	if !testEqual(5, s.DayCount) {
+		t.Fatal(testWantGotMessage(5, s.DayCount))
+	}
+	if !testIsEmpty(s.Requests) {
+		t.Fatal(testEmptyMessage(s.Requests, "should have no requests"))
+	}
+	if !testIsEmpty(s.Tokens) {
+		t.Fatal(testEmptyMessage(s.Tokens, "should have no tokens"))
+	}
 }
 
 // --- Phase 2: End-to-end with persist cycle ---
@@ -708,41 +1005,65 @@ func TestSQLite_EndToEnd_Good(t *testing.T) {
 	rl1, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini, ProviderOpenAI},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl1.RecordUsage("gemini-3-pro-preview", 1000, 500)
 	rl1.RecordUsage("gpt-4o", 200, 200)
 	rl1.SetQuota("custom-local", ModelQuota{MaxRPM: 5, MaxTPM: 10000, MaxRPD: 50})
 	rl1.RecordUsage("custom-local", 100, 100)
-
-	require.NoError(t, rl1.Persist())
-	require.NoError(t, rl1.Close())
+	if err := rl1.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := rl1.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Session 2: Reload and verify all state.
 	rl2, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini, ProviderOpenAI},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
-
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Gemini state.
 	gemini := rl2.Stats("gemini-3-pro-preview")
-	assert.Equal(t, 1, gemini.RPM)
-	assert.Equal(t, 1500, gemini.TPM)
-	assert.Equal(t, 150, gemini.MaxRPM)
+	if !testEqual(1, gemini.RPM) {
+		t.Fatal(testWantGotMessage(1, gemini.RPM))
+	}
+	if !testEqual(1500, gemini.TPM) {
+		t.Fatal(testWantGotMessage(1500, gemini.TPM))
+	}
+	if !testEqual(150, gemini.MaxRPM) {
+		t.Fatal(testWantGotMessage(150, gemini.MaxRPM))
+	}
 
 	// OpenAI state.
 	gpt := rl2.Stats("gpt-4o")
-	assert.Equal(t, 1, gpt.RPM)
-	assert.Equal(t, 400, gpt.TPM)
+	if !testEqual(1, gpt.RPM) {
+		t.Fatal(testWantGotMessage(1, gpt.RPM))
+	}
+	if !testEqual(400, gpt.TPM) {
+		t.Fatal(testWantGotMessage(400, gpt.TPM))
+	}
 
 	// Custom model state.
 	custom := rl2.Stats("custom-local")
-	assert.Equal(t, 1, custom.RPM)
-	assert.Equal(t, 200, custom.TPM)
-	assert.Equal(t, 5, custom.MaxRPM)
+	if !testEqual(1, custom.RPM) {
+		t.Fatal(testWantGotMessage(1, custom.RPM))
+	}
+	if !testEqual(200, custom.TPM) {
+		t.Fatal(testWantGotMessage(200, custom.TPM))
+	}
+	if !testEqual(5, custom.MaxRPM) {
+		t.Fatal(testWantGotMessage(5, custom.MaxRPM))
+	}
 }
 
 func TestSQLite_LoadReplacesPersistedSnapshot_Good(t *testing.T) {
@@ -752,33 +1073,56 @@ func TestSQLite_LoadReplacesPersistedSnapshot_Good(t *testing.T) {
 			"model-a": {MaxRPM: 1, MaxTPM: 100, MaxRPD: 10},
 		},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl.RecordUsage("model-a", 10, 10)
-	require.NoError(t, rl.Persist())
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	delete(rl.Quotas, "model-a")
 	rl.Quotas["model-b"] = ModelQuota{MaxRPM: 2, MaxTPM: 200, MaxRPD: 20}
 	rl.Reset("")
 	rl.RecordUsage("model-b", 5, 5)
-	require.NoError(t, rl.Persist())
-	require.NoError(t, rl.Close())
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := rl.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl2, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
 
 	rl2.State["stale-memory"] = &UsageStats{DayStart: time.Now(), DayCount: 99}
-	require.NoError(t, rl2.Load())
-
-	assert.NotContains(t, rl2.Quotas, "gemini-3-pro-preview")
-	assert.NotContains(t, rl2.Quotas, "model-a")
-	assert.Contains(t, rl2.Quotas, "model-b")
-	assert.NotContains(t, rl2.State, "stale-memory")
-	assert.NotContains(t, rl2.State, "model-a")
-	assert.Equal(t, 1, rl2.Stats("model-b").RPD)
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if testContains(rl2.Quotas, "gemini-3-pro-preview") {
+		t.Fatal(testNotContainsMessage(rl2.Quotas, "gemini-3-pro-preview"))
+	}
+	if testContains(rl2.Quotas, "model-a") {
+		t.Fatal(testNotContainsMessage(rl2.Quotas, "model-a"))
+	}
+	if !testContains(rl2.Quotas, "model-b") {
+		t.Fatal(testContainsMessage(rl2.Quotas, "model-b"))
+	}
+	if testContains(rl2.State, "stale-memory") {
+		t.Fatal(testNotContainsMessage(rl2.State, "stale-memory"))
+	}
+	if testContains(rl2.State, "model-a") {
+		t.Fatal(testNotContainsMessage(rl2.State, "model-a"))
+	}
+	if !testEqual(1, rl2.Stats("model-b").RPD) {
+		t.Fatal(testWantGotMessage(1, rl2.Stats("model-b").RPD))
+	}
 }
 
 func TestSQLite_PersistAtomic_Good(t *testing.T) {
@@ -788,14 +1132,20 @@ func TestSQLite_PersistAtomic_Good(t *testing.T) {
 			"old-model": {MaxRPM: 1, MaxTPM: 100, MaxRPD: 10},
 		},
 	})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl.RecordUsage("old-model", 10, 10)
-	require.NoError(t, rl.Persist())
+	if err := rl.Persist(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	_, err = rl.sqlite.db.Exec(`CREATE TRIGGER fail_daily_persist BEFORE INSERT ON daily
 		BEGIN SELECT RAISE(ABORT, 'forced daily failure'); END`)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	delete(rl.Quotas, "old-model")
 	rl.Quotas["new-model"] = ModelQuota{MaxRPM: 2, MaxTPM: 200, MaxRPD: 20}
@@ -803,18 +1153,33 @@ func TestSQLite_PersistAtomic_Good(t *testing.T) {
 	rl.RecordUsage("new-model", 50, 50)
 
 	err = rl.Persist()
-	require.Error(t, err)
-	require.NoError(t, rl.Close())
+	if err == nil {
+		t.Fatal(testExpectedErrorMessage())
+	}
+	if err := rl.Close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	rl2, err := NewWithSQLiteConfig(dbPath, Config{})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
-	require.NoError(t, rl2.Load())
-
-	assert.Contains(t, rl2.Quotas, "old-model")
-	assert.NotContains(t, rl2.Quotas, "new-model")
-	assert.Equal(t, 1, rl2.Stats("old-model").RPD)
-	assert.Equal(t, 0, rl2.Stats("new-model").RPD)
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if !testContains(rl2.Quotas, "old-model") {
+		t.Fatal(testContainsMessage(rl2.Quotas, "old-model"))
+	}
+	if testContains(rl2.Quotas, "new-model") {
+		t.Fatal(testNotContainsMessage(rl2.Quotas, "new-model"))
+	}
+	if !testEqual(1, rl2.Stats("old-model").RPD) {
+		t.Fatal(testWantGotMessage(1, rl2.Stats("old-model").RPD))
+	}
+	if !testEqual(0, rl2.Stats("new-model").RPD) {
+		t.Fatal(testWantGotMessage(0, rl2.Stats("new-model").RPD))
+	}
 }
 
 // --- Phase 2: Benchmark ---
@@ -911,27 +1276,52 @@ func TestSQLite_MigrateYAMLToSQLiteWithFullState_Good(t *testing.T) {
 	}
 
 	data, err := yaml.Marshal(rl)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	writeTestFile(t, yamlPath, string(data))
+	if err :=
 
-	// Migrate.
-	require.NoError(t, MigrateYAMLToSQLite(yamlPath, sqlitePath))
+		// Migrate.
+		MigrateYAMLToSQLite(yamlPath, sqlitePath); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	// Verify.
 	rl2, err := NewWithSQLiteConfig(sqlitePath, Config{})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 	defer rl2.Close()
-	require.NoError(t, rl2.Load())
+	if err := rl2.Load(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
 
 	gemini := rl2.Stats("gemini-3-pro-preview")
-	assert.Equal(t, 2, gemini.RPM)
-	assert.Equal(t, 800, gemini.TPM) // 500 + 300
-	assert.Equal(t, 25, gemini.RPD)
-	assert.Equal(t, 150, gemini.MaxRPM)
+	if !testEqual(2, gemini.RPM) {
+		t.Fatal(testWantGotMessage(2, gemini.RPM))
+	}
+	if !testEqual(800, gemini.TPM) {
+		t.Fatal(testWantGotMessage(800, gemini.TPM))
+	} // 500 + 300
+	if !testEqual(25, gemini.RPD) {
+		t.Fatal(testWantGotMessage(25, gemini.RPD))
+	}
+	if !testEqual(150, gemini.MaxRPM) {
+		t.Fatal(testWantGotMessage(150, gemini.MaxRPM))
+	}
 
 	claude := rl2.Stats("claude-opus-4")
-	assert.Equal(t, 1, claude.RPM)
-	assert.Equal(t, 1000, claude.TPM)
-	assert.Equal(t, 3, claude.RPD)
-	assert.Equal(t, 50, claude.MaxRPM)
+	if !testEqual(1, claude.RPM) {
+		t.Fatal(testWantGotMessage(1, claude.RPM))
+	}
+	if !testEqual(1000, claude.TPM) {
+		t.Fatal(testWantGotMessage(1000, claude.TPM))
+	}
+	if !testEqual(3, claude.RPD) {
+		t.Fatal(testWantGotMessage(3, claude.RPD))
+	}
+	if !testEqual(50, claude.MaxRPM) {
+		t.Fatal(testWantGotMessage(50, claude.MaxRPM))
+	}
 }
