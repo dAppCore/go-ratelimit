@@ -48,10 +48,19 @@ func TestError_SQLiteErrorPaths_Bad(t *testing.T) {
 }
 
 func TestError_SQLiteInitErrors_Bad(t *testing.T) {
-	t.Run("WAL pragma failure", func(t *testing.T) {
-		// This is hard to trigger without mocking sql.DB, but we can try an invalid connection string
-		// modernc.org/sqlite doesn't support all DSN options that might cause PRAGMA to fail but connection to succeed.
-	})
+	dbPath := testPath(t.TempDir(), "closed-schema.db")
+	store, err := newSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+	if err := store.close(); err != nil {
+		t.Fatal(testUnexpectedErrorMessage(err))
+	}
+
+	err = createSchema(store.db)
+	if err == nil {
+		t.Fatal(testExpectedErrorMessage("schema creation should fail on a closed database"))
+	}
 }
 
 func TestError_PersistYAML_Good(t *testing.T) {
