@@ -6,7 +6,7 @@ import (
 	"database/sql" // Note: intrinsic — sql.DB/sql.Tx contracts and transaction API for SQLite persistence; no core equivalent
 	"time"         // Note: intrinsic — UnixNano timestamp serialisation and restoration for persisted rate-limit state; no core equivalent
 
-	core "dappco.re/go/core"
+	core "dappco.re/go"
 	_ "modernc.org/sqlite"
 )
 

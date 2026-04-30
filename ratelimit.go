@@ -13,7 +13,7 @@ import (
 	"sync"     // Note: intrinsic — RWMutex protects shared in-memory limiter state; no core equivalent
 	"time"     // Note: intrinsic — sliding windows, daily quota periods, timers, and persisted timestamps; no core equivalent
 
-	core "dappco.re/go/core"
+	core "dappco.re/go"
 	"gopkg.in/yaml.v3"
 )
 
