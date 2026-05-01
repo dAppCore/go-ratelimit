@@ -3,11 +3,9 @@
 package ratelimit
 
 import (
-	"errors"
-	"fmt"
+	core "dappco.re/go"
 	"math"
 	"reflect"
-	"strings"
 	"time"
 )
 
@@ -16,9 +14,9 @@ func testFailureMessage(defaultMsg string, msgAndArgs ...any) string {
 		return defaultMsg
 	}
 
-	msg := fmt.Sprint(msgAndArgs...)
+	msg := core.Sprint(msgAndArgs...)
 	if format, ok := msgAndArgs[0].(string); ok && len(msgAndArgs) > 1 {
-		msg = fmt.Sprintf(format, msgAndArgs[1:]...)
+		msg = core.Sprintf(format, msgAndArgs[1:]...)
 	}
 	if defaultMsg == "" {
 		return msg
@@ -27,7 +25,7 @@ func testFailureMessage(defaultMsg string, msgAndArgs ...any) string {
 }
 
 func testUnexpectedErrorMessage(err error, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("unexpected error: %v", err), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("unexpected error: %v", err), msgAndArgs...)
 }
 
 func testExpectedErrorMessage(msgAndArgs ...any) string {
@@ -35,7 +33,7 @@ func testExpectedErrorMessage(msgAndArgs ...any) string {
 }
 
 func testWantGotMessage(want, got any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("want %v, got %v", want, got), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("want %v, got %v", want, got), msgAndArgs...)
 }
 
 func testExpectedTrueMessage(msgAndArgs ...any) string {
@@ -47,7 +45,7 @@ func testExpectedFalseMessage(msgAndArgs ...any) string {
 }
 
 func testExpectedNilMessage(v any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected nil, got %v", v), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected nil, got %v", v), msgAndArgs...)
 }
 
 func testExpectedNonNilMessage(msgAndArgs ...any) string {
@@ -55,46 +53,46 @@ func testExpectedNonNilMessage(msgAndArgs ...any) string {
 }
 
 func testContainsMessage(container, elem any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected %v to contain %v", container, elem), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected %v to contain %v", container, elem), msgAndArgs...)
 }
 
 func testNotContainsMessage(container, elem any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected %v not to contain %v", container, elem), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected %v not to contain %v", container, elem), msgAndArgs...)
 }
 
 func testEmptyMessage(v any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected empty, got %v", v), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected empty, got %v", v), msgAndArgs...)
 }
 
 func testLenMessage(v any, want int, msgAndArgs ...any) string {
 	if got, ok := testLenOf(v); ok {
-		return testFailureMessage(fmt.Sprintf("expected length %d, got %d", want, got), msgAndArgs...)
+		return testFailureMessage(core.Sprintf("expected length %d, got %d", want, got), msgAndArgs...)
 	}
-	return testFailureMessage(fmt.Sprintf("expected length %d, got non-len value %v", want, v), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected length %d, got non-len value %v", want, v), msgAndArgs...)
 }
 
 func testErrorIsMessage(err, target error, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected error %v to match %v", err, target), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected error %v to match %v", err, target), msgAndArgs...)
 }
 
 func testInDeltaMessage(want, got, delta any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected %v and %v to be within %v", want, got, delta), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected %v and %v to be within %v", want, got, delta), msgAndArgs...)
 }
 
 func testZeroMessage(v any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected zero value, got %v", v), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected zero value, got %v", v), msgAndArgs...)
 }
 
 func testUnexpectedPanicMessage(recovered any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("unexpected panic: %v", recovered), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("unexpected panic: %v", recovered), msgAndArgs...)
 }
 
 func testGreaterOrEqualMessage(a, b any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected %v >= %v", a, b), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected %v >= %v", a, b), msgAndArgs...)
 }
 
 func testGreaterMessage(a, b any, msgAndArgs ...any) string {
-	return testFailureMessage(fmt.Sprintf("expected %v > %v", a, b), msgAndArgs...)
+	return testFailureMessage(core.Sprintf("expected %v > %v", a, b), msgAndArgs...)
 }
 
 func testEventuallyMessage(msgAndArgs ...any) string {
@@ -126,9 +124,9 @@ func testContains(container, elem any) bool {
 	if s, ok := container.(string); ok {
 		needle, ok := elem.(string)
 		if !ok {
-			needle = fmt.Sprint(elem)
+			needle = core.Sprint(elem)
 		}
-		return strings.Contains(s, needle)
+		return core.Contains(s, needle)
 	}
 
 	cv := reflect.ValueOf(container)
@@ -186,7 +184,7 @@ func testHasLen(v any, want int) bool {
 }
 
 func testErrorIs(err, target error) bool {
-	return errors.Is(err, target)
+	return core.Is(err, target)
 }
 
 func testInDelta(want, got, delta any) bool {

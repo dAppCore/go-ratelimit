@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: EUPL-1.2
+
+go 1.26.0
+
+// Workspace mode for development: pulls local sources from external/ submodules.
+//
+// CI: GOWORK=off uses go/go.mod tags for reproducible resolution.
+
+use (
+	./go
+	./external/go
+)

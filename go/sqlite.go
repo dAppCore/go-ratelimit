@@ -18,7 +18,7 @@ type sqliteStore struct {
 // newSQLiteStore opens (or creates) a SQLite database at dbPath and initialises
 // the schema. It follows the go-store pattern: single connection, WAL journal
 // mode, and a 5-second busy timeout for contention handling.
-func newSQLiteStore(dbPath string) (*sqliteStore, error) {
+func newSQLiteStore(dbPath string) (*sqliteStore, error) /* core result boundary */ {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, core.E("ratelimit.newSQLiteStore", "open", err)
@@ -45,7 +45,7 @@ func newSQLiteStore(dbPath string) (*sqliteStore, error) {
 }
 
 // createSchema creates the tables and indices if they do not already exist.
-func createSchema(db *sql.DB) error {
+func createSchema(db *sql.DB) error /* core result boundary */ {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS quotas (
 			model   TEXT PRIMARY KEY,
@@ -80,7 +80,7 @@ func createSchema(db *sql.DB) error {
 }
 
 // saveQuotas writes a complete quota snapshot to the quotas table.
-func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error {
+func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error /* core result boundary */ {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return core.E("ratelimit.saveQuotas", "begin", err)
@@ -99,7 +99,7 @@ func (s *sqliteStore) saveQuotas(quotas map[string]ModelQuota) error {
 }
 
 // loadQuotas reads all rows from the quotas table.
-func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) {
+func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) /* core result boundary */ {
 	rows, err := s.db.Query("SELECT model, max_rpm, max_tpm, max_rpd FROM quotas")
 	if err != nil {
 		return nil, core.E("ratelimit.loadQuotas", "query", err)
@@ -122,7 +122,7 @@ func (s *sqliteStore) loadQuotas() (map[string]ModelQuota, error) {
 }
 
 // saveSnapshot writes quotas and state as a single atomic snapshot.
-func (s *sqliteStore) saveSnapshot(quotas map[string]ModelQuota, state map[string]*UsageStats) error {
+func (s *sqliteStore) saveSnapshot(quotas map[string]ModelQuota, state map[string]*UsageStats) error /* core result boundary */ {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return core.E("ratelimit.saveSnapshot", "begin", err)
@@ -146,7 +146,7 @@ func (s *sqliteStore) saveSnapshot(quotas map[string]ModelQuota, state map[strin
 // saveState writes all usage state to SQLite in a single transaction.
 // It uses a truncate-and-insert approach for simplicity in this version,
 // but ensures atomicity via a single transaction.
-func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
+func (s *sqliteStore) saveState(state map[string]*UsageStats) error /* core result boundary */ {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return core.E("ratelimit.saveState", "begin", err)
@@ -164,7 +164,7 @@ func (s *sqliteStore) saveState(state map[string]*UsageStats) error {
 	return commitTx(tx, "ratelimit.saveState")
 }
 
-func clearSnapshotTables(tx *sql.Tx, includeQuotas bool) error {
+func clearSnapshotTables(tx *sql.Tx, includeQuotas bool) error /* core result boundary */ {
 	if includeQuotas {
 		if _, err := tx.Exec("DELETE FROM quotas"); err != nil {
 			return core.E("ratelimit.saveSnapshot", "clear quotas", err)
@@ -182,7 +182,7 @@ func clearSnapshotTables(tx *sql.Tx, includeQuotas bool) error {
 	return nil
 }
 
-func insertQuotas(tx *sql.Tx, quotas map[string]ModelQuota) error {
+func insertQuotas(tx *sql.Tx, quotas map[string]ModelQuota) error /* core result boundary */ {
 	stmt, err := tx.Prepare("INSERT INTO quotas (model, max_rpm, max_tpm, max_rpd) VALUES (?, ?, ?, ?)")
 	if err != nil {
 		return core.E("ratelimit.saveQuotas", "prepare", err)
@@ -197,7 +197,7 @@ func insertQuotas(tx *sql.Tx, quotas map[string]ModelQuota) error {
 	return nil
 }
 
-func insertState(tx *sql.Tx, state map[string]*UsageStats) error {
+func insertState(tx *sql.Tx, state map[string]*UsageStats) error /* core result boundary */ {
 	reqStmt, err := tx.Prepare("INSERT INTO requests (model, ts) VALUES (?, ?)")
 	if err != nil {
 		return core.E("ratelimit.saveState", "prepare requests", err)
@@ -237,7 +237,7 @@ func insertState(tx *sql.Tx, state map[string]*UsageStats) error {
 	return nil
 }
 
-func commitTx(tx *sql.Tx, scope string) error {
+func commitTx(tx *sql.Tx, scope string) error /* core result boundary */ {
 	if err := tx.Commit(); err != nil {
 		return core.E(scope, "commit", err)
 	}
@@ -245,7 +245,7 @@ func commitTx(tx *sql.Tx, scope string) error {
 }
 
 // loadState reconstructs the UsageStats map from SQLite tables.
-func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
+func (s *sqliteStore) loadState() (map[string]*UsageStats, error) /* core result boundary */ {
 	result := make(map[string]*UsageStats)
 
 	// Load daily counters first (these define which models have state).
@@ -323,6 +323,6 @@ func (s *sqliteStore) loadState() (map[string]*UsageStats, error) {
 }
 
 // close closes the underlying database connection.
-func (s *sqliteStore) close() error {
+func (s *sqliteStore) close() error /* core result boundary */ {
 	return s.db.Close()
 }

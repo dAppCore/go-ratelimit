@@ -170,7 +170,7 @@ func DefaultProfiles() map[Provider]ProviderProfile {
 // This preserves backward compatibility -- existing callers are unaffected.
 //
 //	rl, err := New()
-func New() (*RateLimiter, error) {
+func New() (*RateLimiter, error) /* core result boundary */ {
 	return NewWithConfig(Config{
 		Providers: []Provider{ProviderGemini},
 	})
@@ -180,7 +180,7 @@ func New() (*RateLimiter, error) {
 // If no providers or quotas are specified, Gemini defaults are used.
 //
 //	rl, err := NewWithConfig(Config{Providers: []Provider{ProviderAnthropic}})
-func NewWithConfig(cfg Config) (*RateLimiter, error) {
+func NewWithConfig(cfg Config) (*RateLimiter, error) /* core result boundary */ {
 	backend, err := normaliseBackend(cfg.Backend)
 	if err != nil {
 		return nil, err
@@ -234,7 +234,7 @@ func (rl *RateLimiter) AddProvider(provider Provider) {
 // Load reads the state from disk (YAML) or database (SQLite).
 //
 //	if err := rl.Load(); err != nil { /* handle error */ }
-func (rl *RateLimiter) Load() error {
+func (rl *RateLimiter) Load() error /* core result boundary */ {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -260,7 +260,7 @@ func (rl *RateLimiter) Load() error {
 
 // loadSQLite reads quotas and state from the SQLite backend.
 // Caller must hold the lock.
-func (rl *RateLimiter) loadSQLite() error {
+func (rl *RateLimiter) loadSQLite() error /* core result boundary */ {
 	quotas, err := rl.sqlite.loadQuotas()
 	if err != nil {
 		return err
@@ -283,7 +283,7 @@ func (rl *RateLimiter) loadSQLite() error {
 // It clones the state under a lock and performs I/O without blocking other callers.
 //
 //	if err := rl.Persist(); err != nil { /* handle error */ }
-func (rl *RateLimiter) Persist() error {
+func (rl *RateLimiter) Persist() error /* core result boundary */ {
 	rl.mu.Lock()
 	quotas := maps.Clone(rl.Quotas)
 	state := make(map[string]*UsageStats, len(rl.State))
@@ -437,7 +437,7 @@ func (rl *RateLimiter) RecordUsage(model string, promptTokens, outputTokens int)
 // WaitForCapacity blocks until capacity is available or context is cancelled.
 //
 //	err := rl.WaitForCapacity(ctx, "gemini-3-pro-preview", 1200)
-func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error {
+func (rl *RateLimiter) WaitForCapacity(ctx context.Context, model string, tokens int) error /* core result boundary */ {
 	if tokens < 0 {
 		return core.E("ratelimit.WaitForCapacity", "negative tokens", nil)
 	}
@@ -703,7 +703,7 @@ func (rl *RateLimiter) snapshotLocked(model string) ModelStats {
 // release the database connection when finished.
 //
 //	rl, err := NewWithSQLite("/tmp/ratelimits.db")
-func NewWithSQLite(dbPath string) (*RateLimiter, error) {
+func NewWithSQLite(dbPath string) (*RateLimiter, error) /* core result boundary */ {
 	return NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini},
 	})
@@ -714,7 +714,7 @@ func NewWithSQLite(dbPath string) (*RateLimiter, error) {
 // release the database connection when finished.
 //
 //	rl, err := NewWithSQLiteConfig("/tmp/ratelimits.db", Config{Providers: []Provider{ProviderOpenAI}})
-func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) {
+func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) /* core result boundary */ {
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
 		return nil, err
@@ -730,7 +730,7 @@ func NewWithSQLiteConfig(dbPath string, cfg Config) (*RateLimiter, error) {
 // database connection.
 //
 //	defer rl.Close()
-func (rl *RateLimiter) Close() error {
+func (rl *RateLimiter) Close() error /* core result boundary */ {
 	if rl.sqlite != nil {
 		return rl.sqlite.close()
 	}
@@ -742,7 +742,7 @@ func (rl *RateLimiter) Close() error {
 // database is created if it does not exist.
 //
 //	err := MigrateYAMLToSQLite("ratelimits.yaml", "ratelimits.db")
-func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
+func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error /* core result boundary */ {
 	// Load from YAML.
 	content, err := readLocalFile(yamlPath)
 	if err != nil {
@@ -770,11 +770,11 @@ func MigrateYAMLToSQLite(yamlPath, sqlitePath string) error {
 // CountTokens calls the Google API to count tokens for a prompt.
 //
 //	tokens, err := CountTokens(ctx, apiKey, "gemini-3-pro-preview", prompt)
-func CountTokens(ctx context.Context, apiKey, model, text string) (int, error) {
+func CountTokens(ctx context.Context, apiKey, model, text string) (int, error) /* core result boundary */ {
 	return countTokensWithClient(ctx, http.DefaultClient, "https://generativelanguage.googleapis.com", apiKey, model, text)
 }
 
-func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, apiKey, model, text string) (int, error) {
+func countTokensWithClient(ctx context.Context, client *http.Client, baseURL, apiKey, model, text string) (int, error) /* core result boundary */ {
 	requestURL, err := countTokensURL(baseURL, model)
 	if err != nil {
 		return 0, core.E("ratelimit.CountTokens", "build url", err)
@@ -879,7 +879,7 @@ func applyConfig(rl *RateLimiter, cfg Config) {
 	maps.Copy(rl.Quotas, cfg.Quotas)
 }
 
-func normaliseBackend(backend string) (string, error) {
+func normaliseBackend(backend string) (string, error) /* core result boundary */ {
 	switch core.Lower(core.Trim(backend)) {
 	case "", backendYAML:
 		return backendYAML, nil
@@ -890,7 +890,7 @@ func normaliseBackend(backend string) (string, error) {
 	}
 }
 
-func defaultStatePath(backend string) (string, error) {
+func defaultStatePath(backend string) (string, error) /* core result boundary */ {
 	home := currentHomeDir()
 	if home == "" {
 		return "", core.E("ratelimit.defaultStatePath", "home dir unavailable", nil)
@@ -997,7 +997,7 @@ func nonNegativeDuration(value time.Duration) time.Duration {
 	return value
 }
 
-func countTokensURL(baseURL, model string) (string, error) {
+func countTokensURL(baseURL, model string) (string, error) /* core result boundary */ {
 	if core.Trim(model) == "" {
 		return "", core.E("ratelimit.countTokensURL", "empty model", nil)
 	}
@@ -1027,7 +1027,7 @@ func hasURLAuthority(rawURL string) bool {
 	return authority != ""
 }
 
-func readLimitedBody(r io.Reader, limit int64) (string, error) {
+func readLimitedBody(r io.Reader, limit int64) (string, error) /* core result boundary */ {
 	body, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
 		return "", err
@@ -1045,7 +1045,7 @@ func readLimitedBody(r io.Reader, limit int64) (string, error) {
 	return result, nil
 }
 
-func readLocalFile(path string) (string, error) {
+func readLocalFile(path string) (string, error) /* core result boundary */ {
 	var fs core.Fs
 	result := fs.Read(path)
 	if !result.OK {
@@ -1059,17 +1059,17 @@ func readLocalFile(path string) (string, error) {
 	return content, nil
 }
 
-func writeLocalFile(path, content string) error {
+func writeLocalFile(path, content string) error /* core result boundary */ {
 	var fs core.Fs
 	return resultError(fs.Write(path, content))
 }
 
-func ensureDir(path string) error {
+func ensureDir(path string) error /* core result boundary */ {
 	var fs core.Fs
 	return resultError(fs.EnsureDir(path))
 }
 
-func resultError(result core.Result) error {
+func resultError(result core.Result) error /* core result boundary */ {
 	if result.OK {
 		return nil
 	}

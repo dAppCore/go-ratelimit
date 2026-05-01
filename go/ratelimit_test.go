@@ -4,7 +4,6 @@ package ratelimit
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -495,7 +494,7 @@ func TestRatelimit_Decide_Good(t *testing.T) {
 
 // --- Phase 0: Sliding window / prune tests ---
 
-func TestRatelimit_Prune_Good(t *testing.T) {
+func TestRatelimit_Prune_Case(t *testing.T) {
 	t.Run("removes old entries", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		model := "test-prune"
@@ -849,7 +848,7 @@ func TestRatelimit_WaitForCapacity_Good(t *testing.T) {
 	})
 }
 
-func TestRatelimit_NilUsageStats_Ugly(t *testing.T) {
+func TestRatelimit_NilUsageStats_Case(t *testing.T) {
 	t.Run("CanSend replaces nil state without panicking", func(t *testing.T) {
 		rl := newTestLimiter(t)
 		model := "nil-cansend"
@@ -1065,7 +1064,7 @@ func TestRatelimit_AllStats_Good(t *testing.T) {
 
 // --- Phase 0: Persist and Load ---
 
-func TestRatelimit_PersistAndLoad_Ugly(t *testing.T) {
+func TestRatelimit_PersistAndLoad_Case(t *testing.T) {
 	t.Run("round-trip preserves state", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := testPath(tmpDir, "ratelimits.yaml")
@@ -1186,7 +1185,7 @@ func TestRatelimit_PersistAndLoad_Ugly(t *testing.T) {
 
 // --- Phase 0: Default quotas ---
 
-func TestRatelimit_DefaultQuotas_Good(t *testing.T) {
+func TestRatelimit_DefaultQuotas_Case(t *testing.T) {
 	rl := newTestLimiter(t)
 
 	tests := []struct {
@@ -1206,7 +1205,7 @@ func TestRatelimit_DefaultQuotas_Good(t *testing.T) {
 		t.Run(tt.model, func(t *testing.T) {
 			q, ok := rl.Quotas[tt.model]
 			if !ok {
-				t.Fatal(testExpectedTrueMessage(fmt.Sprintf("quota should exist for %s", tt.model)))
+				t.Fatal(testExpectedTrueMessage(core.Sprintf("quota should exist for %s", tt.model)))
 			}
 			if !testEqual(tt.maxRPM, q.MaxRPM) {
 				t.Fatal(testWantGotMessage(tt.maxRPM, q.MaxRPM))
@@ -1223,7 +1222,7 @@ func TestRatelimit_DefaultQuotas_Good(t *testing.T) {
 
 // --- Phase 0: Concurrent access (race test) ---
 
-func TestRatelimit_ConcurrentAccess_Good(t *testing.T) {
+func TestRatelimit_ConcurrentAccess_Case(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "concurrent-test"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 10000000, MaxRPD: 10000}
@@ -1251,7 +1250,7 @@ func TestRatelimit_ConcurrentAccess_Good(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentResetAndRecord_Ugly(t *testing.T) {
+func TestRatelimit_ConcurrentResetAndRecord_Case(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "concurrent-reset"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 10000, MaxTPM: 100000000, MaxRPD: 100000}
@@ -1334,7 +1333,7 @@ func TestRatelimit_BackgroundPrune_Good(t *testing.T) {
 
 // --- Phase 0: CountTokens (with mock HTTP server) ---
 
-func TestRatelimit_CountTokens_Ugly(t *testing.T) {
+func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 	t.Run("successful token count", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !testEqual(http.MethodPost, r.Method) {
@@ -1522,7 +1521,7 @@ func TestRatelimit_CountTokens_Ugly(t *testing.T) {
 	})
 }
 
-func TestRatelimit_PersistSkipsNilState_Good(t *testing.T) {
+func TestRatelimit_PersistSkipsNilState_Case1524(t *testing.T) {
 	path := testPath(t.TempDir(), "nil-state.yaml")
 
 	rl, err := New()
@@ -1548,7 +1547,7 @@ func TestRatelimit_PersistSkipsNilState_Good(t *testing.T) {
 	}
 }
 
-func TestRatelimit_TokenTotals_Good(t *testing.T) {
+func TestRatelimit_TokenTotals_Case1550(t *testing.T) {
 	maxInt := int(^uint(0) >> 1)
 	if !testEqual(25, safeTokenSum(-100, 25)) {
 		t.Fatal(testWantGotMessage(25, safeTokenSum(-100, 25)))
@@ -1745,7 +1744,7 @@ func TestRatelimit_DefaultProfiles_Good(t *testing.T) {
 	})
 }
 
-func TestRatelimit_NewWithConfig_Ugly(t *testing.T) {
+func TestRatelimit_NewWithConfig_ExistingCase(t *testing.T) {
 	t.Run("empty config defaults to Gemini", func(t *testing.T) {
 		rl, err := NewWithConfig(Config{
 			FilePath: testPath(t.TempDir(), "test.yaml"),
@@ -1930,7 +1929,7 @@ func TestRatelimit_NewWithConfig_Ugly(t *testing.T) {
 	})
 }
 
-func TestRatelimit_NewBackwardCompatibility_Good(t *testing.T) {
+func TestRatelimit_NewBackwardCompatibility_Case1932(t *testing.T) {
 	// New() should produce the exact same result as before Phase 1
 	rl, err := New()
 	if err != nil {
@@ -2082,7 +2081,7 @@ func TestRatelimit_AddProvider_Good(t *testing.T) {
 	})
 }
 
-func TestRatelimit_ProviderConstants_Good(t *testing.T) {
+func TestRatelimit_ProviderConstants_Case2084(t *testing.T) {
 	// Verify the string values are stable (they may be used in YAML configs)
 	if !testEqual(Provider("gemini"), ProviderGemini) {
 		t.Fatal(testWantGotMessage(Provider("gemini"), ProviderGemini))
@@ -2100,7 +2099,7 @@ func TestRatelimit_ProviderConstants_Good(t *testing.T) {
 
 // --- Phase 0 addendum: Additional concurrent and multi-model race tests ---
 
-func TestRatelimit_ConcurrentMultipleModels_Good(t *testing.T) {
+func TestRatelimit_ConcurrentMultipleModels_Case2102(t *testing.T) {
 	rl := newTestLimiter(t)
 	models := []string{"model-a", "model-b", "model-c", "model-d", "model-e"}
 	for _, m := range models {
@@ -2132,7 +2131,7 @@ func TestRatelimit_ConcurrentMultipleModels_Good(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentPersistAndLoad_Ugly(t *testing.T) {
+func TestRatelimit_ConcurrentPersistAndLoad_Case2134(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := testPath(tmpDir, "concurrent.yaml")
 
@@ -2166,7 +2165,7 @@ func TestRatelimit_ConcurrentPersistAndLoad_Ugly(t *testing.T) {
 	// No panics or data races = pass
 }
 
-func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Good(t *testing.T) {
+func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Case2168(t *testing.T) {
 	rl := newTestLimiter(t)
 	models := []string{"stats-a", "stats-b", "stats-c"}
 	for _, m := range models {
@@ -2197,7 +2196,7 @@ func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Good(t *testing.T) {
 	wg.Wait()
 }
 
-func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Good(t *testing.T) {
+func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Case2199(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "race-wait"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 100, MaxTPM: 10000000, MaxRPD: 10000}
@@ -2315,7 +2314,7 @@ func BenchmarkPersist(b *testing.B) {
 	}
 }
 
-func TestRatelimit_EndToEndMultiProvider_Good(t *testing.T) {
+func TestRatelimit_EndToEndMultiProvider_Case2317(t *testing.T) {
 	// Simulate a real-world scenario: limiter for both Gemini and Anthropic
 	rl, err := NewWithConfig(Config{
 		FilePath:  testPath(t.TempDir(), "multi.yaml"),
@@ -2477,7 +2476,7 @@ func TestRatelimit_Decide_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_Prune_Bad(t *testing.T) {
+func TestRatelimit_Prune_Case2479(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "prune-recent-over-quota"
 	now := time.Unix(1_700_000_000, 0)
@@ -2498,7 +2497,7 @@ func TestRatelimit_Prune_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_Prune_Ugly(t *testing.T) {
+func TestRatelimit_Prune_Case2500(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "prune-future-clock-skew"
 	now := time.Unix(1_700_000_000, 0)
@@ -2797,7 +2796,7 @@ func TestRatelimit_AllStats_Ugly(t *testing.T) {
 		wg.Go(func() {
 			for i := range 50 {
 				rl.RecordUsage(model, i, 1)
-				rl.SetQuota(fmt.Sprintf("allstats-dynamic-%d", i), ModelQuota{MaxRPM: i + 1})
+				rl.SetQuota(core.Sprintf("allstats-dynamic-%d", i), ModelQuota{MaxRPM: i + 1})
 			}
 		})
 		wg.Go(func() {
@@ -2825,7 +2824,7 @@ func TestRatelimit_AllStats_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_DefaultQuotas_Bad(t *testing.T) {
+func TestRatelimit_DefaultQuotas_Case2827(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		FilePath:  testPath(t.TempDir(), "missing-provider.yaml"),
 		Providers: []Provider{Provider("missing-provider")},
@@ -2839,7 +2838,7 @@ func TestRatelimit_DefaultQuotas_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_DefaultQuotas_Ugly(t *testing.T) {
+func TestRatelimit_DefaultQuotas_Case2841(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "gemini-3-pro-preview"
 
@@ -2866,7 +2865,7 @@ func TestRatelimit_DefaultQuotas_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentAccess_Bad(t *testing.T) {
+func TestRatelimit_ConcurrentAccess_Case2868(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "concurrent-denied"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 100}
@@ -2889,7 +2888,7 @@ func TestRatelimit_ConcurrentAccess_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentAccess_Ugly(t *testing.T) {
+func TestRatelimit_ConcurrentAccess_Case2891(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "concurrent-nil-state"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 1000000, MaxRPD: 1000}
@@ -2937,7 +2936,7 @@ func TestRatelimit_BackgroundPrune_Ugly(t *testing.T) {
 	stop()
 }
 
-func TestRatelimit_PersistSkipsNilState_Bad(t *testing.T) {
+func TestRatelimit_PersistSkipsNilState_Case2939(t *testing.T) {
 	path := testPath(t.TempDir(), "nil-state.yaml")
 	rl := newTestLimiter(t)
 	rl.filePath = path
@@ -2955,7 +2954,7 @@ func TestRatelimit_PersistSkipsNilState_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_PersistSkipsNilState_Ugly(t *testing.T) {
+func TestRatelimit_PersistSkipsNilState_Case2957(t *testing.T) {
 	path := testPath(t.TempDir(), "mixed-state.yaml")
 	rl := newTestLimiter(t)
 	rl.filePath = path
@@ -2979,7 +2978,7 @@ func TestRatelimit_PersistSkipsNilState_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_TokenTotals_Bad(t *testing.T) {
+func TestRatelimit_TokenTotals_Case2981(t *testing.T) {
 	if !testEqual(maxInt(), safeTokenSum(maxInt()-1, 1)) {
 		t.Fatal(testWantGotMessage(maxInt(), safeTokenSum(maxInt()-1, 1), "exact max boundary should be representable"))
 	}
@@ -2992,7 +2991,7 @@ func TestRatelimit_TokenTotals_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_TokenTotals_Ugly(t *testing.T) {
+func TestRatelimit_TokenTotals_Case2994(t *testing.T) {
 	tokens := []TokenEntry{
 		{},
 		{Count: 0},
@@ -3033,7 +3032,7 @@ func TestRatelimit_DefaultProfiles_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_NewBackwardCompatibility_Bad(t *testing.T) {
+func TestRatelimit_NewBackwardCompatibility_Case3035(t *testing.T) {
 	t.Setenv("CORE_HOME", "")
 	t.Setenv("HOME", "")
 	t.Setenv("home", "")
@@ -3045,7 +3044,7 @@ func TestRatelimit_NewBackwardCompatibility_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_NewBackwardCompatibility_Ugly(t *testing.T) {
+func TestRatelimit_NewBackwardCompatibility_Case3047(t *testing.T) {
 	coreHome := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("CORE_HOME", coreHome)
@@ -3112,14 +3111,14 @@ func TestRatelimit_AddProvider_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ProviderConstants_Bad(t *testing.T) {
+func TestRatelimit_ProviderConstants_Case3114(t *testing.T) {
 	unknown := Provider("gemini ")
 	if testEqual(ProviderGemini, unknown) {
 		t.Fatal(testExpectedFalseMessage("provider constants should not silently normalize unknown strings"))
 	}
 }
 
-func TestRatelimit_ProviderConstants_Ugly(t *testing.T) {
+func TestRatelimit_ProviderConstants_Case3121(t *testing.T) {
 	seen := map[Provider]bool{
 		ProviderGemini:    true,
 		ProviderOpenAI:    true,
@@ -3134,7 +3133,7 @@ func TestRatelimit_ProviderConstants_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentMultipleModels_Bad(t *testing.T) {
+func TestRatelimit_ConcurrentMultipleModels_Case3136(t *testing.T) {
 	rl := newTestLimiter(t)
 	rl.Quotas["blocked"] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 10}
 	rl.Quotas["open"] = ModelQuota{MaxRPM: 100, MaxTPM: 1000, MaxRPD: 10}
@@ -3167,7 +3166,7 @@ func TestRatelimit_ConcurrentMultipleModels_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentMultipleModels_Ugly(t *testing.T) {
+func TestRatelimit_ConcurrentMultipleModels_Case3169(t *testing.T) {
 	rl := newTestLimiter(t)
 	models := []string{"", "model/with/slash", "model with spaces"}
 	for _, model := range models {
@@ -3193,7 +3192,7 @@ func TestRatelimit_ConcurrentMultipleModels_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Bad(t *testing.T) {
+func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Case3195(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "allstats-record-nil"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 1000}
@@ -3219,7 +3218,7 @@ func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Ugly(t *testing.T) {
+func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Case3221(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "allstats-record-reset"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 1000}
@@ -3245,7 +3244,7 @@ func TestRatelimit_ConcurrentAllStatsAndRecordUsage_Ugly(t *testing.T) {
 	wg.Wait()
 }
 
-func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Bad(t *testing.T) {
+func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Case3247(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "wait-record-denied"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000, MaxRPD: 100}
@@ -3275,7 +3274,7 @@ func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Ugly(t *testing.T) {
+func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Case3277(t *testing.T) {
 	rl := newTestLimiter(t)
 	model := "wait-record-zero"
 	rl.Quotas[model] = ModelQuota{MaxRPM: 1000, MaxTPM: 100000, MaxRPD: 1000}
@@ -3306,7 +3305,7 @@ func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Ugly(t *testing.T) {
 	}
 }
 
-func TestRatelimit_EndToEndMultiProvider_Bad(t *testing.T) {
+func TestRatelimit_EndToEndMultiProvider_Case3308(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		FilePath:  testPath(t.TempDir(), "multi-bad.yaml"),
 		Providers: []Provider{ProviderGemini, ProviderAnthropic},
@@ -3331,7 +3330,7 @@ func TestRatelimit_EndToEndMultiProvider_Bad(t *testing.T) {
 	}
 }
 
-func TestRatelimit_EndToEndMultiProvider_Ugly(t *testing.T) {
+func TestRatelimit_EndToEndMultiProvider_Case3333(t *testing.T) {
 	path := testPath(t.TempDir(), "multi-ugly.yaml")
 	model := "local/custom model"
 	quota := ModelQuota{MaxRPM: 5, MaxTPM: 500, MaxRPD: 0}
@@ -3403,4 +3402,695 @@ func (testRequireShim) False(tb testing.TB, value bool, msgAndArgs ...any) {
 	if value {
 		tb.Fatal(testExpectedFalseMessage(msgAndArgs...))
 	}
+}
+
+// Public-symbol v0.9.0 triplets migrated from the old AX7 aggregate file.
+type publicRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f publicRoundTrip) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func publicYAMLPath(t *core.T) string {
+	t.Helper()
+	return core.Path(t.TempDir(), "ratelimits.yaml")
+}
+
+func publicLimiter(t *core.T) *RateLimiter {
+	t.Helper()
+	rl, err := NewWithConfig(Config{
+		FilePath:  publicYAMLPath(t),
+		Providers: []Provider{ProviderLocal},
+	})
+	core.RequireNoError(t, err)
+	return rl
+}
+
+func TestRatelimit_New_Good(t *core.T) {
+	rl, err := New()
+
+	core.RequireNoError(t, err)
+	core.AssertTrue(t, rl.CanSend("gemini-3-pro-preview", 1))
+}
+
+func TestRatelimit_New_Bad(t *core.T) {
+	t.Setenv("CORE_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("home", "")
+	t.Setenv("USERPROFILE", "")
+
+	rl, err := New()
+	core.AssertError(t, err)
+	core.AssertNil(t, rl)
+}
+
+func TestRatelimit_New_Ugly(t *core.T) {
+	rl1, err := New()
+	core.RequireNoError(t, err)
+	rl2, err := New()
+	core.RequireNoError(t, err)
+
+	rl1.RecordUsage("gemini-3-pro-preview", 1, 1)
+	core.AssertEqual(t, 1, rl1.Stats("gemini-3-pro-preview").RPD)
+	core.AssertEqual(t, 0, rl2.Stats("gemini-3-pro-preview").RPD)
+}
+
+func TestRatelimit_NewWithConfig_Good(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath:  publicYAMLPath(t),
+		Providers: []Provider{ProviderOpenAI},
+		Quotas: map[string]ModelQuota{
+			"custom": {MaxRPM: 7, MaxTPM: 70, MaxRPD: 700},
+		},
+	})
+
+	core.RequireNoError(t, err)
+	core.AssertEqual(t, 500, rl.Stats("gpt-4o").MaxRPM)
+	core.AssertEqual(t, 7, rl.Stats("custom").MaxRPM)
+}
+
+func TestRatelimit_NewWithConfig_Bad(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath: publicYAMLPath(t),
+		Backend:  "bogus",
+	})
+
+	core.AssertError(t, err)
+	core.AssertNil(t, rl)
+}
+
+func TestRatelimit_NewWithConfig_Ugly(t *core.T) {
+	rl, err := NewWithConfig(Config{FilePath: publicYAMLPath(t)})
+
+	core.RequireNoError(t, err)
+	core.AssertEqual(t, 150, rl.Stats("gemini-3-pro-preview").MaxRPM)
+	core.AssertEqual(t, 0, rl.Stats("missing-model").MaxRPM)
+}
+
+func TestRatelimit_RateLimiter_SetQuota_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 3, MaxTPM: 30, MaxRPD: 300})
+
+	stats := rl.Stats("model-a")
+	core.AssertEqual(t, 3, stats.MaxRPM)
+	core.AssertEqual(t, 30, stats.MaxTPM)
+	core.AssertEqual(t, 300, stats.MaxRPD)
+}
+
+func TestRatelimit_RateLimiter_SetQuota_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1})
+	rl.SetQuota("model-a", ModelQuota{})
+
+	decision := rl.Decide("model-a", 999999)
+	core.AssertTrue(t, decision.Allowed)
+	core.AssertEqual(t, DecisionUnlimited, decision.Code)
+}
+
+func TestRatelimit_RateLimiter_SetQuota_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("", ModelQuota{MaxRPM: 1})
+
+	core.AssertEqual(t, 1, rl.Stats("").MaxRPM)
+	core.AssertFalse(t, rl.CanSend("", -1))
+}
+
+func TestRatelimit_RateLimiter_AddProvider_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.AddProvider(ProviderAnthropic)
+
+	core.AssertEqual(t, 50, rl.Stats("claude-opus-4").MaxRPM)
+	core.AssertEqual(t, 40000, rl.Stats("claude-opus-4").MaxTPM)
+}
+
+func TestRatelimit_RateLimiter_AddProvider_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	rl.AddProvider(Provider("unknown"))
+
+	models := make([]string, 0)
+	for model := range rl.Models() {
+		models = append(models, model)
+	}
+	core.AssertEmpty(t, models)
+}
+
+func TestRatelimit_RateLimiter_AddProvider_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("local-model", ModelQuota{MaxRPM: 2})
+	rl.AddProvider(ProviderLocal)
+
+	core.AssertEqual(t, 2, rl.Stats("local-model").MaxRPM)
+	core.AssertTrue(t, rl.CanSend("unknown-local", 1))
+}
+
+func TestRatelimit_RateLimiter_Load_Good(t *core.T) {
+	path := publicYAMLPath(t)
+	rl, err := NewWithConfig(Config{
+		FilePath: path,
+		Quotas:   map[string]ModelQuota{"model-a": {MaxRPM: 5}},
+	})
+	core.RequireNoError(t, err)
+	rl.RecordUsage("model-a", 1, 2)
+	core.RequireNoError(t, rl.Persist())
+
+	loaded, err := NewWithConfig(Config{FilePath: path, Providers: []Provider{ProviderLocal}})
+	core.RequireNoError(t, err)
+	core.AssertNoError(t, loaded.Load())
+	core.AssertEqual(t, 1, loaded.Stats("model-a").RPD)
+}
+
+func TestRatelimit_RateLimiter_Load_Bad(t *core.T) {
+	path := publicYAMLPath(t)
+	core.RequireTrue(t, core.WriteFile(path, []byte("{{{not yaml"), 0o600).OK)
+	rl, err := NewWithConfig(Config{FilePath: path, Providers: []Provider{ProviderLocal}})
+	core.RequireNoError(t, err)
+
+	err = rl.Load()
+	core.AssertError(t, err)
+	core.AssertContains(t, err.Error(), "yaml")
+}
+
+func TestRatelimit_RateLimiter_Load_Ugly(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath:  core.Path(t.TempDir(), "missing.yaml"),
+		Providers: []Provider{ProviderLocal},
+	})
+	core.RequireNoError(t, err)
+
+	core.AssertNoError(t, rl.Load())
+	core.AssertEmpty(t, rl.AllStats())
+}
+
+func TestRatelimit_RateLimiter_Persist_Good(t *core.T) {
+	path := publicYAMLPath(t)
+	rl, err := NewWithConfig(Config{FilePath: path, Quotas: map[string]ModelQuota{"model-a": {MaxRPM: 2}}})
+	core.RequireNoError(t, err)
+	rl.RecordUsage("model-a", 1, 1)
+
+	core.AssertNoError(t, rl.Persist())
+	stat := core.Stat(path)
+	core.AssertTrue(t, stat.OK)
+}
+
+func TestRatelimit_RateLimiter_Persist_Bad(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath:  t.TempDir(),
+		Providers: []Provider{ProviderLocal},
+	})
+	core.RequireNoError(t, err)
+	rl.RecordUsage("model-a", 1, 1)
+
+	err = rl.Persist()
+	core.AssertError(t, err)
+}
+
+func TestRatelimit_RateLimiter_Persist_Ugly(t *core.T) {
+	path := publicYAMLPath(t)
+	rl, err := NewWithConfig(Config{FilePath: path, Providers: []Provider{ProviderLocal}})
+	core.RequireNoError(t, err)
+
+	core.AssertNoError(t, rl.Persist())
+	loaded, err := NewWithConfig(Config{FilePath: path, Providers: []Provider{ProviderLocal}})
+	core.RequireNoError(t, err)
+	core.AssertNoError(t, loaded.Load())
+}
+
+func TestRatelimit_RateLimiter_BackgroundPrune_Good(t *core.T) {
+	rl := publicLimiter(t)
+	stop := rl.BackgroundPrune(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+
+	core.AssertNotPanics(t, stop)
+	core.AssertEmpty(t, rl.AllStats())
+}
+
+func TestRatelimit_RateLimiter_BackgroundPrune_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	stop := rl.BackgroundPrune(0)
+	rl.RecordUsage("model-a", 1, 1)
+
+	core.AssertNotPanics(t, stop)
+	core.AssertEqual(t, 1, rl.Stats("model-a").RPD)
+}
+
+func TestRatelimit_RateLimiter_BackgroundPrune_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	stop := rl.BackgroundPrune(1 * time.Millisecond)
+
+	core.AssertNotPanics(t, stop)
+	core.AssertNotPanics(t, stop)
+}
+
+func TestRatelimit_RateLimiter_CanSend_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 2, MaxTPM: 100, MaxRPD: 5})
+
+	core.AssertTrue(t, rl.CanSend("model-a", 10))
+	core.AssertEqual(t, DecisionAllowed, rl.Decide("model-a", 10).Code)
+}
+
+func TestRatelimit_RateLimiter_CanSend_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 5})
+	rl.RecordUsage("model-a", 1, 1)
+
+	core.AssertFalse(t, rl.CanSend("model-a", 1))
+	core.AssertEqual(t, DecisionRPMLimit, rl.Decide("model-a", 1).Code)
+}
+
+func TestRatelimit_RateLimiter_CanSend_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 5})
+
+	core.AssertFalse(t, rl.CanSend("model-a", -1))
+	core.AssertTrue(t, rl.CanSend("unknown-model", 999999))
+}
+
+func TestRatelimit_RateLimiter_RecordUsage_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.RecordUsage("model-a", 10, 15)
+
+	stats := rl.Stats("model-a")
+	core.AssertEqual(t, 1, stats.RPD)
+	core.AssertEqual(t, 25, stats.TPM)
+}
+
+func TestRatelimit_RateLimiter_RecordUsage_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	rl.RecordUsage("model-a", -10, 15)
+
+	stats := rl.Stats("model-a")
+	core.AssertEqual(t, 1, stats.RPD)
+	core.AssertEqual(t, 15, stats.TPM)
+}
+
+func TestRatelimit_RateLimiter_RecordUsage_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.RecordUsage("", 0, 0)
+
+	stats := rl.Stats("")
+	core.AssertEqual(t, 1, stats.RPD)
+	core.AssertEqual(t, 0, stats.TPM)
+}
+
+func TestRatelimit_RateLimiter_WaitForCapacity_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 5})
+
+	err := rl.WaitForCapacity(context.Background(), "model-a", 1)
+	core.AssertNoError(t, err)
+}
+
+func TestRatelimit_RateLimiter_WaitForCapacity_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	err := rl.WaitForCapacity(context.Background(), "model-a", -1)
+
+	core.AssertError(t, err)
+	core.AssertContains(t, err.Error(), "negative tokens")
+}
+
+func TestRatelimit_RateLimiter_WaitForCapacity_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 5})
+	rl.RecordUsage("model-a", 1, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := rl.WaitForCapacity(ctx, "model-a", 1)
+	core.AssertErrorIs(t, err, context.Canceled)
+}
+
+func TestRatelimit_RateLimiter_Reset_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.RecordUsage("model-a", 1, 1)
+	rl.Reset("model-a")
+
+	stats := rl.Stats("model-a")
+	core.AssertEqual(t, 0, stats.RPD)
+	core.AssertEqual(t, 0, stats.TPM)
+}
+
+func TestRatelimit_RateLimiter_Reset_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	rl.RecordUsage("model-a", 1, 1)
+	rl.Reset("missing-model")
+
+	core.AssertEqual(t, 1, rl.Stats("model-a").RPD)
+	core.AssertEqual(t, 0, rl.Stats("missing-model").RPD)
+}
+
+func TestRatelimit_RateLimiter_Reset_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.RecordUsage("model-a", 1, 1)
+	rl.RecordUsage("model-b", 1, 1)
+	rl.Reset("")
+
+	core.AssertEqual(t, 0, rl.Stats("model-a").RPD)
+	core.AssertEqual(t, 0, rl.Stats("model-b").RPD)
+}
+
+func TestRatelimit_RateLimiter_Models_Good(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath: publicYAMLPath(t),
+		Quotas: map[string]ModelQuota{
+			"model-b": {MaxRPM: 2},
+			"model-a": {MaxRPM: 1},
+		},
+	})
+	core.RequireNoError(t, err)
+
+	var models []string
+	for model := range rl.Models() {
+		models = append(models, model)
+	}
+	core.AssertEqual(t, []string{"model-a", "model-b"}, models)
+}
+
+func TestRatelimit_RateLimiter_Models_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	var models []string
+	for model := range rl.Models() {
+		models = append(models, model)
+	}
+
+	core.AssertEmpty(t, models)
+	core.AssertEqual(t, 0, rl.Stats("missing").MaxRPM)
+}
+
+func TestRatelimit_RateLimiter_Models_Ugly(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath: publicYAMLPath(t),
+		Quotas: map[string]ModelQuota{
+			"model-a": {MaxRPM: 1},
+			"model-b": {MaxRPM: 2},
+			"model-c": {MaxRPM: 3},
+		},
+	})
+	core.RequireNoError(t, err)
+
+	var first string
+	for model := range rl.Models() {
+		first = model
+		break
+	}
+	core.AssertEqual(t, "model-a", first)
+}
+
+func TestRatelimit_RateLimiter_Iter_Good(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath: publicYAMLPath(t),
+		Quotas: map[string]ModelQuota{
+			"model-b": {MaxRPM: 2},
+			"model-a": {MaxRPM: 1},
+		},
+	})
+	core.RequireNoError(t, err)
+	rl.RecordUsage("model-a", 1, 1)
+
+	var models []string
+	for model, stats := range rl.Iter() {
+		models = append(models, model)
+		if model == "model-a" {
+			core.AssertEqual(t, 1, stats.RPD)
+		}
+	}
+	core.AssertEqual(t, []string{"model-a", "model-b"}, models)
+}
+
+func TestRatelimit_RateLimiter_Iter_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	var models []string
+	for model := range rl.Iter() {
+		models = append(models, model)
+	}
+
+	core.AssertEmpty(t, models)
+	core.AssertEmpty(t, rl.AllStats())
+}
+
+func TestRatelimit_RateLimiter_Iter_Ugly(t *core.T) {
+	rl, err := NewWithConfig(Config{
+		FilePath: publicYAMLPath(t),
+		Quotas: map[string]ModelQuota{
+			"model-a": {MaxRPM: 1},
+			"model-b": {MaxRPM: 2},
+			"model-c": {MaxRPM: 3},
+		},
+	})
+	core.RequireNoError(t, err)
+
+	var seen []string
+	for model := range rl.Iter() {
+		seen = append(seen, model)
+		if len(seen) == 2 {
+			break
+		}
+	}
+	core.AssertEqual(t, []string{"model-a", "model-b"}, seen)
+}
+
+func TestRatelimit_RateLimiter_Stats_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 10, MaxTPM: 100, MaxRPD: 5})
+	rl.RecordUsage("model-a", 2, 3)
+
+	stats := rl.Stats("model-a")
+	core.AssertEqual(t, 1, stats.RPM)
+	core.AssertEqual(t, 5, stats.TPM)
+	core.AssertEqual(t, 10, stats.MaxRPM)
+}
+
+func TestRatelimit_RateLimiter_Stats_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	stats := rl.Stats("missing-model")
+
+	core.AssertEqual(t, 0, stats.RPM)
+	core.AssertEqual(t, 0, stats.MaxRPM)
+	core.AssertTrue(t, stats.DayStart.IsZero())
+}
+
+func TestRatelimit_RateLimiter_Stats_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.RecordUsage("model-a", 1, 1)
+	rl.Reset("model-a")
+
+	stats := rl.Stats("model-a")
+	core.AssertEqual(t, 0, stats.RPD)
+	core.AssertEqual(t, 0, stats.TPM)
+}
+
+func TestRatelimit_RateLimiter_AllStats_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 10})
+	rl.RecordUsage("model-b", 1, 1)
+
+	all := rl.AllStats()
+	core.AssertContains(t, all, "model-a")
+	core.AssertContains(t, all, "model-b")
+	core.AssertEqual(t, 2, all["model-b"].TPM)
+}
+
+func TestRatelimit_RateLimiter_AllStats_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	all := rl.AllStats()
+
+	core.AssertEmpty(t, all)
+	core.AssertEqual(t, 0, len(all))
+}
+
+func TestRatelimit_RateLimiter_AllStats_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 10})
+	all := rl.AllStats()
+
+	core.AssertContains(t, all, "model-a")
+	core.AssertEqual(t, 0, all["model-a"].RPM)
+	core.AssertEqual(t, 10, all["model-a"].MaxRPM)
+}
+
+func TestRatelimit_RateLimiter_Decide_Good(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 2, MaxTPM: 100, MaxRPD: 5})
+
+	decision := rl.Decide("model-a", 10)
+	core.AssertTrue(t, decision.Allowed)
+	core.AssertEqual(t, DecisionAllowed, decision.Code)
+}
+
+func TestRatelimit_RateLimiter_Decide_Bad(t *core.T) {
+	rl := publicLimiter(t)
+	decision := rl.Decide("model-a", -1)
+
+	core.AssertFalse(t, decision.Allowed)
+	core.AssertEqual(t, DecisionInvalidTokens, decision.Code)
+	core.AssertContains(t, decision.Reason, "non-negative")
+}
+
+func TestRatelimit_RateLimiter_Decide_Ugly(t *core.T) {
+	rl := publicLimiter(t)
+	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 5})
+	rl.RecordUsage("model-a", 1, 1)
+
+	decision := rl.Decide("model-a", 1)
+	core.AssertFalse(t, decision.Allowed)
+	core.AssertEqual(t, DecisionRPMLimit, decision.Code)
+}
+
+func TestRatelimit_NewWithSQLite_Good(t *core.T) {
+	rl, err := NewWithSQLite(core.Path(t.TempDir(), "limits.db"))
+
+	core.RequireNoError(t, err)
+	defer rl.Close()
+	rl.RecordUsage("gemini-3-pro-preview", 1, 1)
+	core.AssertNoError(t, rl.Persist())
+}
+
+func TestRatelimit_NewWithSQLite_Bad(t *core.T) {
+	rl, err := NewWithSQLite(core.Path(t.TempDir(), "missing", "limits.db"))
+
+	core.AssertError(t, err)
+	core.AssertNil(t, rl)
+}
+
+func TestRatelimit_NewWithSQLite_Ugly(t *core.T) {
+	path := core.Path(t.TempDir(), "limits with spaces.db")
+	rl, err := NewWithSQLite(path)
+	core.RequireNoError(t, err)
+	rl.RecordUsage("gemini-3-pro-preview", 1, 1)
+
+	core.AssertNoError(t, rl.Persist())
+	core.AssertNoError(t, rl.Close())
+}
+
+func TestRatelimit_NewWithSQLiteConfig_Good(t *core.T) {
+	rl, err := NewWithSQLiteConfig(core.Path(t.TempDir(), "limits.db"), Config{
+		Providers: []Provider{ProviderOpenAI},
+		Quotas:    map[string]ModelQuota{"custom": {MaxRPM: 9}},
+	})
+
+	core.RequireNoError(t, err)
+	defer rl.Close()
+	core.AssertEqual(t, 500, rl.Stats("gpt-4o").MaxRPM)
+	core.AssertEqual(t, 9, rl.Stats("custom").MaxRPM)
+}
+
+func TestRatelimit_NewWithSQLiteConfig_Bad(t *core.T) {
+	rl, err := NewWithSQLiteConfig(core.Path(t.TempDir(), "missing", "limits.db"), Config{})
+
+	core.AssertError(t, err)
+	core.AssertNil(t, rl)
+}
+
+func TestRatelimit_NewWithSQLiteConfig_Ugly(t *core.T) {
+	rl, err := NewWithSQLiteConfig(core.Path(t.TempDir(), "limits.db"), Config{
+		Backend:   "yaml",
+		Providers: []Provider{ProviderLocal},
+	})
+
+	core.RequireNoError(t, err)
+	defer rl.Close()
+	rl.RecordUsage("local", 1, 1)
+	core.AssertNoError(t, rl.Persist())
+}
+
+func TestRatelimit_RateLimiter_Close_Good(t *core.T) {
+	rl := publicLimiter(t)
+	err := rl.Close()
+
+	core.AssertNoError(t, err)
+	core.AssertNoError(t, rl.Close())
+}
+
+func TestRatelimit_RateLimiter_Close_Bad(t *core.T) {
+	rl, err := NewWithSQLite(core.Path(t.TempDir(), "limits.db"))
+	core.RequireNoError(t, err)
+	core.RequireNoError(t, rl.Close())
+
+	err = rl.Persist()
+	core.AssertError(t, err)
+}
+
+func TestRatelimit_RateLimiter_Close_Ugly(t *core.T) {
+	rl, err := NewWithSQLite(core.Path(t.TempDir(), "limits.db"))
+	core.RequireNoError(t, err)
+
+	core.AssertNoError(t, rl.Close())
+	core.AssertNoError(t, rl.Close())
+}
+
+func TestRatelimit_MigrateYAMLToSQLite_Good(t *core.T) {
+	yamlPath := publicYAMLPath(t)
+	sqlitePath := core.Path(t.TempDir(), "limits.db")
+	rl, err := NewWithConfig(Config{
+		FilePath: yamlPath,
+		Quotas:   map[string]ModelQuota{"model-a": {MaxRPM: 4}},
+	})
+	core.RequireNoError(t, err)
+	rl.RecordUsage("model-a", 2, 3)
+	core.RequireNoError(t, rl.Persist())
+
+	core.AssertNoError(t, MigrateYAMLToSQLite(yamlPath, sqlitePath))
+	loaded, err := NewWithSQLite(sqlitePath)
+	core.RequireNoError(t, err)
+	defer loaded.Close()
+	core.AssertNoError(t, loaded.Load())
+	core.AssertEqual(t, 1, loaded.Stats("model-a").RPD)
+}
+
+func TestRatelimit_MigrateYAMLToSQLite_Bad(t *core.T) {
+	err := MigrateYAMLToSQLite(core.Path(t.TempDir(), "missing.yaml"), core.Path(t.TempDir(), "limits.db"))
+
+	core.AssertError(t, err)
+	core.AssertContains(t, err.Error(), "read")
+}
+
+func TestRatelimit_MigrateYAMLToSQLite_Ugly(t *core.T) {
+	yamlPath := publicYAMLPath(t)
+	sqlitePath := core.Path(t.TempDir(), "limits.db")
+	core.RequireTrue(t, core.WriteFile(yamlPath, []byte("{{{not yaml"), 0o600).OK)
+
+	err := MigrateYAMLToSQLite(yamlPath, sqlitePath)
+	core.AssertError(t, err)
+	core.AssertContains(t, err.Error(), "unmarshal")
+}
+
+func TestRatelimit_CountTokens_Good(t *core.T) {
+	oldTransport := http.DefaultTransport
+	http.DefaultTransport = publicRoundTrip(func(req *http.Request) (*http.Response, error) {
+		core.AssertContains(t, req.URL.Path, "/v1beta/models/gemini-3-pro-preview:countTokens")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(core.NewReader(`{"totalTokens":7}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	defer func() { http.DefaultTransport = oldTransport }()
+
+	tokens, err := CountTokens(context.Background(), "key", "gemini-3-pro-preview", "hello")
+	core.AssertNoError(t, err)
+	core.AssertEqual(t, 7, tokens)
+}
+
+func TestRatelimit_CountTokens_Bad(t *core.T) {
+	tokens, err := CountTokens(context.Background(), "key", "", "hello")
+
+	core.AssertError(t, err)
+	core.AssertEqual(t, 0, tokens)
+	core.AssertContains(t, err.Error(), "empty model")
+}
+
+func TestRatelimit_CountTokens_Ugly(t *core.T) {
+	oldTransport := http.DefaultTransport
+	http.DefaultTransport = publicRoundTrip(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(core.NewReader(`{"totalTokens":"bad"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})
+	defer func() { http.DefaultTransport = oldTransport }()
+
+	tokens, err := CountTokens(context.Background(), "key", "gemini-3-pro-preview", "hello")
+	core.AssertError(t, err)
+	core.AssertEqual(t, 0, tokens)
 }
