@@ -3,7 +3,7 @@
 package ratelimit
 
 import (
-	"fmt"
+	core "dappco.re/go"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +13,7 @@ import (
 
 // --- Phase 2: SQLite basic tests ---
 
-func TestSQLite_NewSQLiteStore_Good(t *testing.T) {
+func TestSQLite_NewSQLiteStore_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "test.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -27,7 +27,7 @@ func TestSQLite_NewSQLiteStore_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_NewSQLiteStore_Bad(t *testing.T) {
+func TestSQLite_NewSQLiteStore_Case_2(t *testing.T) {
 	t.Run("invalid path returns error", func(t *testing.T) {
 		// Path inside a non-existent directory with no parent.
 		_, err := newSQLiteStore("/nonexistent/deep/nested/dir/test.db")
@@ -37,7 +37,7 @@ func TestSQLite_NewSQLiteStore_Bad(t *testing.T) {
 	})
 }
 
-func TestSQLite_QuotasRoundTrip_Good(t *testing.T) {
+func TestSQLite_QuotasRoundTrip_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "quotas.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestSQLite_QuotasRoundTrip_Good(t *testing.T) {
 	for model, expected := range quotas {
 		actual, ok := loaded[model]
 		if !ok {
-			t.Fatal(testExpectedTrueMessage(fmt.Sprintf("loaded quotas should contain %s", model)))
+			t.Fatal(testExpectedTrueMessage(core.Sprintf("loaded quotas should contain %s", model)))
 		}
 		if !testEqual(expected.MaxRPM, actual.MaxRPM) {
 			t.Fatal(testWantGotMessage(expected.MaxRPM, actual.MaxRPM))
@@ -78,7 +78,7 @@ func TestSQLite_QuotasRoundTrip_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_QuotasOverwrite_Good(t *testing.T) {
+func TestSQLite_QuotasOverwrite_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "overwrite.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestSQLite_QuotasOverwrite_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_StateRoundTrip_Good(t *testing.T) {
+func TestSQLite_StateRoundTrip_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "state.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -166,40 +166,40 @@ func TestSQLite_StateRoundTrip_Good(t *testing.T) {
 	for model, expected := range state {
 		actual, ok := loaded[model]
 		if !ok {
-			t.Fatal(testExpectedTrueMessage(fmt.Sprintf("loaded state should contain %s", model)))
+			t.Fatal(testExpectedTrueMessage(core.Sprintf("loaded state should contain %s", model)))
 		}
 		if !testHasLen(actual.Requests, len(expected.Requests)) {
-			t.Fatal(testLenMessage(actual.Requests, len(expected.Requests), fmt.Sprintf("request count for %s", model)))
+			t.Fatal(testLenMessage(actual.Requests, len(expected.Requests), core.Sprintf("request count for %s", model)))
 		}
 		if !testHasLen(actual.Tokens, len(expected.Tokens)) {
-			t.Fatal(testLenMessage(actual.Tokens, len(expected.Tokens), fmt.Sprintf("token count for %s", model)))
+			t.Fatal(testLenMessage(actual.Tokens, len(expected.Tokens), core.Sprintf("token count for %s", model)))
 		}
 		if !testEqual(expected.DayCount, actual.DayCount) {
-			t.Fatal(testWantGotMessage(expected.DayCount, actual.DayCount, fmt.Sprintf("day count for %s", model)))
+			t.Fatal(testWantGotMessage(expected.DayCount, actual.DayCount, core.Sprintf("day count for %s", model)))
 		}
 
 		// Time comparison with nanosecond precision (UnixNano round-trip).
 		if !testEqual(expected.DayStart.UnixNano(), actual.DayStart.UnixNano()) {
-			t.Fatal(testWantGotMessage(expected.DayStart.UnixNano(), actual.DayStart.UnixNano(), fmt.Sprintf("day start for %s", model)))
+			t.Fatal(testWantGotMessage(expected.DayStart.UnixNano(), actual.DayStart.UnixNano(), core.Sprintf("day start for %s", model)))
 		}
 
 		for i, req := range expected.Requests {
 			if !testEqual(req.UnixNano(), actual.Requests[i].UnixNano()) {
-				t.Fatal(testWantGotMessage(req.UnixNano(), actual.Requests[i].UnixNano(), fmt.Sprintf("request %d for %s", i, model)))
+				t.Fatal(testWantGotMessage(req.UnixNano(), actual.Requests[i].UnixNano(), core.Sprintf("request %d for %s", i, model)))
 			}
 		}
 		for i, tok := range expected.Tokens {
 			if !testEqual(tok.Time.UnixNano(), actual.Tokens[i].Time.UnixNano()) {
-				t.Fatal(testWantGotMessage(tok.Time.UnixNano(), actual.Tokens[i].Time.UnixNano(), fmt.Sprintf("token time %d for %s", i, model)))
+				t.Fatal(testWantGotMessage(tok.Time.UnixNano(), actual.Tokens[i].Time.UnixNano(), core.Sprintf("token time %d for %s", i, model)))
 			}
 			if !testEqual(tok.Count, actual.Tokens[i].Count) {
-				t.Fatal(testWantGotMessage(tok.Count, actual.Tokens[i].Count, fmt.Sprintf("token count %d for %s", i, model)))
+				t.Fatal(testWantGotMessage(tok.Count, actual.Tokens[i].Count, core.Sprintf("token count %d for %s", i, model)))
 			}
 		}
 	}
 }
 
-func TestSQLite_StateOverwrite_Good(t *testing.T) {
+func TestSQLite_StateOverwrite_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "overwrite.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -255,7 +255,7 @@ func TestSQLite_StateOverwrite_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_EmptyState_Good(t *testing.T) {
+func TestSQLite_EmptyState_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "empty.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -281,7 +281,7 @@ func TestSQLite_EmptyState_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_Close_Good(t *testing.T) {
+func TestSQLite_Close_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "close.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -344,7 +344,7 @@ func TestSQLite_NewWithSQLiteConfig_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_PersistAndLoad_Good(t *testing.T) {
+func TestSQLite_PersistAndLoad_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "persist.db")
 	rl, err := NewWithSQLite(dbPath)
 	if err != nil {
@@ -393,7 +393,7 @@ func TestSQLite_PersistAndLoad_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_PersistMultipleModels_Good(t *testing.T) {
+func TestSQLite_PersistMultipleModels_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "multi.db")
 	rl, err := NewWithSQLiteConfig(dbPath, Config{
 		Providers: []Provider{ProviderGemini, ProviderAnthropic},
@@ -439,7 +439,7 @@ func TestSQLite_PersistMultipleModels_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_RecordUsageThenPersistReload_Good(t *testing.T) {
+func TestSQLite_RecordUsageThenPersistReload_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "record.db")
 	rl, err := NewWithSQLite(dbPath)
 	if err != nil {
@@ -496,7 +496,7 @@ func TestSQLite_RecordUsageThenPersistReload_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_CloseNoOp_Good(t *testing.T) {
+func TestSQLite_CloseNoOp_Case(t *testing.T) {
 	// Close on YAML-backed limiter is a no-op.
 	rl := newTestLimiter(t)
 	if err := rl.Close(); err != nil {
@@ -571,7 +571,7 @@ func TestSQLite_Concurrent_Good(t *testing.T) {
 
 // --- Phase 2: YAML backward compatibility ---
 
-func TestSQLite_YAMLBackwardCompat_Good(t *testing.T) {
+func TestSQLite_YAMLBackwardCompat_Case(t *testing.T) {
 	// Verify that the default YAML backend still works after SQLite additions.
 	tmpDir := t.TempDir()
 	path := testPath(tmpDir, "compat.yaml")
@@ -611,7 +611,7 @@ func TestSQLite_YAMLBackwardCompat_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_ConfigBackendDefault_Good(t *testing.T) {
+func TestSQLite_ConfigBackendDefault_Case(t *testing.T) {
 	// Empty Backend string should default to YAML behaviour.
 	rl, err := NewWithConfig(Config{
 		FilePath: testPath(t.TempDir(), "default.yaml"),
@@ -624,7 +624,7 @@ func TestSQLite_ConfigBackendDefault_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_ConfigBackendSQLite_Good(t *testing.T) {
+func TestSQLite_ConfigBackendSQLite_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "config-backend.db")
 	rl, err := NewWithConfig(Config{
 		Backend:  backendSQLite,
@@ -649,7 +649,7 @@ func TestSQLite_ConfigBackendSQLite_Good(t *testing.T) {
 	}
 }
 
-func TestSQLite_ConfigBackendSQLiteDefaultPath_Good(t *testing.T) {
+func TestSQLite_ConfigBackendSQLiteDefaultPath_Case(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", "")
@@ -882,10 +882,10 @@ func TestSQLite_MigrateYAMLToSQLitePreservesAllGeminiModels_Good(t *testing.T) {
 	for model := range rl.Quotas {
 		q, ok := rl2.Quotas[model]
 		if !ok {
-			t.Fatal(testExpectedTrueMessage(fmt.Sprintf("migrated quota should exist for %s", model)))
+			t.Fatal(testExpectedTrueMessage(core.Sprintf("migrated quota should exist for %s", model)))
 		}
 		if !testEqual(rl.Quotas[model], q) {
-			t.Fatal(testWantGotMessage(rl.Quotas[model], q, fmt.Sprintf("quota values should match for %s", model)))
+			t.Fatal(testWantGotMessage(rl.Quotas[model], q, core.Sprintf("quota values should match for %s", model)))
 		}
 	}
 }

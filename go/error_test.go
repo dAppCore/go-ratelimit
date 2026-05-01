@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestError_SQLiteErrorPaths_Bad(t *testing.T) {
+func TestError_SQLiteErrorPaths_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "error.db")
 	rl, err := NewWithSQLite(dbPath)
 	if err != nil {
@@ -47,7 +47,7 @@ func TestError_SQLiteErrorPaths_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteInitErrors_Bad(t *testing.T) {
+func TestError_SQLiteInitErrors_Case(t *testing.T) {
 	dbPath := testPath(t.TempDir(), "closed-schema.db")
 	store, err := newSQLiteStore(dbPath)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestError_SQLiteInitErrors_Bad(t *testing.T) {
 	}
 }
 
-func TestError_PersistYAML_Good(t *testing.T) {
+func TestError_PersistYAML_Case(t *testing.T) {
 	t.Run("successful YAML persist and load", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := testPath(tmpDir, "ratelimits.yaml")
@@ -89,7 +89,7 @@ func TestError_PersistYAML_Good(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteLoadViaLimiter_Bad(t *testing.T) {
+func TestError_SQLiteLoadViaLimiter_Case(t *testing.T) {
 	t.Run("Load returns error when SQLite DB is closed", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "load-err.db")
 		rl, err := NewWithSQLite(dbPath)
@@ -133,7 +133,7 @@ func TestError_SQLiteLoadViaLimiter_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLitePersistViaLimiter_Bad(t *testing.T) {
+func TestError_SQLitePersistViaLimiter_Case(t *testing.T) {
 	t.Run("Persist returns error when SQLite saveQuotas fails", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "persist-err.db")
 		rl, err := NewWithSQLite(dbPath)
@@ -201,7 +201,7 @@ func TestError_NewWithSQLite_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteSaveState_Bad(t *testing.T) {
+func TestError_SQLiteSaveState_Case(t *testing.T) {
 	t.Run("saveState fails when tokens table is dropped", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "tokens-err.db")
 		store, err := newSQLiteStore(dbPath)
@@ -334,7 +334,7 @@ func TestError_SQLiteSaveState_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteLoadState_Bad(t *testing.T) {
+func TestError_SQLiteLoadState_Case(t *testing.T) {
 	t.Run("loadState fails when requests table is dropped", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "req-err.db")
 		store, err := newSQLiteStore(dbPath)
@@ -425,7 +425,7 @@ func TestError_SQLiteLoadState_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteSaveQuotasExec_Bad(t *testing.T) {
+func TestError_SQLiteSaveQuotasExec_Case(t *testing.T) {
 	t.Run("saveQuotas fails with renamed column at prepare", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "quota-exec-err.db")
 		store, err := newSQLiteStore(dbPath)
@@ -475,7 +475,7 @@ func TestError_SQLiteSaveQuotasExec_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteSaveStateExec_Bad(t *testing.T) {
+func TestError_SQLiteSaveStateExec_Case(t *testing.T) {
 	t.Run("request insert exec fails via trigger", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "trigger-req.db")
 		store, err := newSQLiteStore(dbPath)
@@ -569,7 +569,7 @@ func TestError_SQLiteSaveStateExec_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteLoadQuotasScan_Bad(t *testing.T) {
+func TestError_SQLiteLoadQuotasScan_Case(t *testing.T) {
 	t.Run("loadQuotas fails with renamed column", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "quota-scan-err.db")
 		store, err := newSQLiteStore(dbPath)
@@ -599,7 +599,7 @@ func TestError_SQLiteLoadQuotasScan_Bad(t *testing.T) {
 	})
 }
 
-func TestError_NewSQLiteStoreInReadOnlyDir_Bad(t *testing.T) {
+func TestError_NewSQLiteStoreInReadOnlyDir_Case(t *testing.T) {
 	if isRootUser() {
 		t.Skip("chmod restrictions do not apply to root")
 	}
@@ -621,7 +621,7 @@ func TestError_NewSQLiteStoreInReadOnlyDir_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteCreateSchema_Bad(t *testing.T) {
+func TestError_SQLiteCreateSchema_Case(t *testing.T) {
 	t.Run("createSchema fails on closed DB", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "schema-err.db")
 		store, err := newSQLiteStore(dbPath)
@@ -642,7 +642,7 @@ func TestError_SQLiteCreateSchema_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteLoadStateScan_Bad(t *testing.T) {
+func TestError_SQLiteLoadStateScan_Case(t *testing.T) {
 	t.Run("scan daily fails with NULL values", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "scan-daily.db")
 		store, err := newSQLiteStore(dbPath)
@@ -746,7 +746,7 @@ func TestError_SQLiteLoadStateScan_Bad(t *testing.T) {
 	})
 }
 
-func TestError_SQLiteLoadQuotasScanWithBadSchema_Bad(t *testing.T) {
+func TestError_SQLiteLoadQuotasScanWithBadSchema_Case(t *testing.T) {
 	t.Run("scan fails with NULL quota values", func(t *testing.T) {
 		dbPath := testPath(t.TempDir(), "scan-quota.db")
 		store, err := newSQLiteStore(dbPath)
@@ -775,7 +775,7 @@ func TestError_SQLiteLoadQuotasScanWithBadSchema_Bad(t *testing.T) {
 	})
 }
 
-func TestError_MigrateYAMLToSQLiteWithSaveErrors_Bad(t *testing.T) {
+func TestError_MigrateYAMLToSQLiteWithSaveErrors_Case(t *testing.T) {
 	t.Run("saveQuotas failure during migration via trigger", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		yamlPath := testPath(tmpDir, "with-quotas.yaml")
@@ -843,7 +843,7 @@ func TestError_MigrateYAMLToSQLiteWithSaveErrors_Bad(t *testing.T) {
 	})
 }
 
-func TestError_MigrateYAMLToSQLiteNilQuotasAndState_Good(t *testing.T) {
+func TestError_MigrateYAMLToSQLiteNilQuotasAndState_Case(t *testing.T) {
 	t.Run("YAML with empty quotas and state migrates cleanly", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		yamlPath := testPath(tmpDir, "empty.yaml")
@@ -878,7 +878,7 @@ func TestError_MigrateYAMLToSQLiteNilQuotasAndState_Good(t *testing.T) {
 	})
 }
 
-func TestError_NewWithConfigHomeUnavailable_Bad(t *testing.T) {
+func TestError_NewWithConfigHomeUnavailable_Case(t *testing.T) {
 	// Clear all supported home env vars so defaultStatePath cannot resolve a home directory.
 	t.Setenv("CORE_HOME", "")
 	t.Setenv("HOME", "")
@@ -891,7 +891,7 @@ func TestError_NewWithConfigHomeUnavailable_Bad(t *testing.T) {
 	}
 }
 
-func TestError_PersistMarshal_Good(t *testing.T) {
+func TestError_PersistMarshal_Case(t *testing.T) {
 	// yaml.Marshal on a struct with map[string]ModelQuota and map[string]*UsageStats
 	// should not fail in practice. We test the error path by using a type that
 	// yaml.Marshal cannot handle: a channel.
@@ -905,7 +905,7 @@ func TestError_PersistMarshal_Good(t *testing.T) {
 	}
 }
 
-func TestError_MigrateErrorsExtended_Bad(t *testing.T) {
+func TestError_MigrateErrorsExtended_Case(t *testing.T) {
 	t.Run("unmarshal failure", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := testPath(tmpDir, "bad.yaml")

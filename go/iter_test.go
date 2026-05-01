@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestIter_Iterators_Good(t *testing.T) {
+func TestIter_Iterators_Case(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Quotas: map[string]ModelQuota{
 			"model-c": {MaxRPM: 10},
@@ -97,7 +97,7 @@ func TestIter_Iterators_Good(t *testing.T) {
 	})
 }
 
-func TestIter_Iterators_Bad(t *testing.T) {
+func TestIter_Iterators_Case_2(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		FilePath:  testPath(t.TempDir(), "iter-empty.yaml"),
 		Providers: []Provider{ProviderLocal},
@@ -123,7 +123,7 @@ func TestIter_Iterators_Bad(t *testing.T) {
 	}
 }
 
-func TestIter_Iterators_Ugly(t *testing.T) {
+func TestIter_Iterators_Case_3(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		FilePath: testPath(t.TempDir(), "iter-break.yaml"),
 		Quotas: map[string]ModelQuota{
@@ -160,7 +160,7 @@ func TestIter_Iterators_Ugly(t *testing.T) {
 	}
 }
 
-func TestIter_IterEarlyBreak_Good(t *testing.T) {
+func TestIter_IterEarlyBreak_Case(t *testing.T) {
 	rl, err := NewWithConfig(Config{
 		Quotas: map[string]ModelQuota{
 			"model-a": {MaxRPM: 10},
@@ -199,7 +199,7 @@ func TestIter_IterEarlyBreak_Good(t *testing.T) {
 	})
 }
 
-func TestIter_CountTokensFull_Ugly(t *testing.T) {
+func TestIter_CountTokensFull_Case(t *testing.T) {
 	t.Run("empty model is rejected", func(t *testing.T) {
 		_, err := CountTokens(context.Background(), "key", "", "text")
 		if err == nil {
