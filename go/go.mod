@@ -5,7 +5,7 @@ module dappco.re/go/ratelimit
 go 1.26.0
 
 require (
-	dappco.re/go v0.9.0
+	dappco.re/go v0.10.3
 	gopkg.in/yaml.v3 v3.0.1 // Note: YAML parse for rate limit rules config; no core.* YAML parser.
 	modernc.org/sqlite v1.47.0 // Note: pure-Go SQLite for rate limit state persistence; no core.* SQLite driver.
 )
