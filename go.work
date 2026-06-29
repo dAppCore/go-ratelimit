@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: EUPL-1.2
 
-go 1.26.0
+go 1.26.2
 
 // Workspace mode for development: pulls local sources from external/ submodules.
 //
