@@ -21,7 +21,7 @@ func testPath(parts ...string) string {
 
 func pathExists(path string) bool {
 	var fs core.Fs
-	return fs.Exists(path)
+	return fs.Exists(path).OK
 }
 
 func writeTestFile(tb testing.TB, path, content string) {
