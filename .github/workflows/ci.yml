@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dAppCore/build/actions/build/core@dev
+      - uses: dAppCore/build/actions/build/core@v4
         with:
           go-version: "1.26"
           run-vet: "true"
@@ -33,7 +33,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-      - uses: dAppCore/build/actions/fix@dev
+      - uses: dAppCore/build/actions/fix@v4
         with:
           go-version: "1.26"
 
