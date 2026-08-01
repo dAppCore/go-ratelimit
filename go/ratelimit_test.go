@@ -64,7 +64,7 @@ func isRootUser() bool {
 
 func repeatString(part string, count int) string {
 	builder := core.NewBuilder()
-	for i := 0; i < count; i++ {
+	for range count {
 		builder.WriteString(part)
 	}
 	return builder.String()
@@ -786,7 +786,7 @@ func TestRatelimit_WaitForCapacity_Good(t *testing.T) {
 
 		rl.RecordUsage(model, 10, 10)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		err := rl.WaitForCapacity(ctx, model, 10)
@@ -800,7 +800,7 @@ func TestRatelimit_WaitForCapacity_Good(t *testing.T) {
 		model := "wait-immediate"
 		rl.Quotas[model] = ModelQuota{MaxRPM: 10, MaxTPM: 1000000, MaxRPD: 100}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err := rl.WaitForCapacity(ctx, model, 10)
@@ -812,7 +812,7 @@ func TestRatelimit_WaitForCapacity_Good(t *testing.T) {
 	t.Run("unknown model returns immediately", func(t *testing.T) {
 		rl := newTestLimiter(t)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 		defer cancel()
 
 		err := rl.WaitForCapacity(ctx, "unknown-model", 999999)
@@ -827,7 +827,7 @@ func TestRatelimit_WaitForCapacity_Good(t *testing.T) {
 		rl.Quotas[model] = ModelQuota{MaxRPM: 1, MaxTPM: 1000000, MaxRPD: 100}
 		rl.RecordUsage(model, 10, 10)
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // cancel immediately
 
 		err := rl.WaitForCapacity(ctx, model, 10)
@@ -838,7 +838,7 @@ func TestRatelimit_WaitForCapacity_Good(t *testing.T) {
 
 	t.Run("negative tokens return error", func(t *testing.T) {
 		rl := newTestLimiter(t)
-		err := rl.WaitForCapacity(context.Background(), "wait-negative", -1)
+		err := rl.WaitForCapacity(t.Context(), "wait-negative", -1)
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -1372,7 +1372,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 		}))
 		defer server.Close()
 
-		tokens, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "test-api-key", "test-model", "hello")
+		tokens, err := countTokensWithClient(t.Context(), server.Client(), server.URL, "test-api-key", "test-model", "hello")
 		if err != nil {
 			t.Fatal(testUnexpectedErrorMessage(err))
 		}
@@ -1394,7 +1394,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 		}))
 		defer server.Close()
 
-		tokens, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "test-api-key", "folder/model?debug=1", "hello")
+		tokens, err := countTokensWithClient(t.Context(), server.Client(), server.URL, "test-api-key", "folder/model?debug=1", "hello")
 		if err != nil {
 			t.Fatal(testUnexpectedErrorMessage(err))
 		}
@@ -1414,7 +1414,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 		}))
 		defer server.Close()
 
-		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "fake-key", "test-model", "hello")
+		_, err := countTokensWithClient(t.Context(), server.Client(), server.URL, "fake-key", "test-model", "hello")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -1430,7 +1430,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 	})
 
 	t.Run("empty model is rejected before request", func(t *testing.T) {
-		_, err := CountTokens(context.Background(), "fake-key", "", "hello")
+		_, err := CountTokens(t.Context(), "fake-key", "", "hello")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -1440,7 +1440,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 	})
 
 	t.Run("invalid base URL returns error", func(t *testing.T) {
-		_, err := countTokensWithClient(context.Background(), http.DefaultClient, "://bad-url", "fake-key", "test-model", "hello")
+		_, err := countTokensWithClient(t.Context(), http.DefaultClient, "://bad-url", "fake-key", "test-model", "hello")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -1450,7 +1450,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 	})
 
 	t.Run("base URL without host returns error", func(t *testing.T) {
-		_, err := countTokensWithClient(context.Background(), http.DefaultClient, "/relative", "fake-key", "test-model", "hello")
+		_, err := countTokensWithClient(t.Context(), http.DefaultClient, "/relative", "fake-key", "test-model", "hello")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -1469,7 +1469,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 		}))
 		defer server.Close()
 
-		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "fake-key", "test-model", "hello")
+		_, err := countTokensWithClient(t.Context(), server.Client(), server.URL, "fake-key", "test-model", "hello")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -1489,7 +1489,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 			}),
 		}
 
-		_, err := countTokensWithClient(context.Background(), client, "https://generativelanguage.googleapis.com", "fake-key", "test-model", "hello")
+		_, err := countTokensWithClient(t.Context(), client, "https://generativelanguage.googleapis.com", "fake-key", "test-model", "hello")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -1511,7 +1511,7 @@ func TestRatelimit_CountTokens_ExistingCase(t *testing.T) {
 			http.DefaultClient = originalClient
 		}()
 
-		tokens, err := countTokensWithClient(context.Background(), nil, server.URL, "fake-key", "test-model", "hello")
+		tokens, err := countTokensWithClient(t.Context(), nil, server.URL, "fake-key", "test-model", "hello")
 		if err != nil {
 			t.Fatal(testUnexpectedErrorMessage(err))
 		}
@@ -2205,7 +2205,7 @@ func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Case2199(t *testing.T
 
 	for range 5 {
 		wg.Go(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 			defer cancel()
 			_ = rl.WaitForCapacity(ctx, model, 10)
 		})
@@ -2688,7 +2688,7 @@ func TestRatelimit_WaitForCapacity_Bad(t *testing.T) {
 		DayCount: 1,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := rl.WaitForCapacity(ctx, model, 1)
@@ -2710,7 +2710,7 @@ func TestRatelimit_WaitForCapacity_Ugly(t *testing.T) {
 		DayCount: 1,
 	}
 
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Nanosecond))
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Nanosecond))
 	defer cancel()
 
 	if err := rl.WaitForCapacity(ctx, model, 1); err != nil {
@@ -3175,7 +3175,6 @@ func TestRatelimit_ConcurrentMultipleModels_Case3169(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for _, model := range models {
-		model := model
 		wg.Go(func() {
 			for range 10 {
 				rl.RecordUsage(model, 1, 1)
@@ -3254,7 +3253,7 @@ func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Case3247(t *testing.T
 	errs := make(chan error, 5)
 	for range 5 {
 		wg.Go(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 			defer cancel()
 			errs <- rl.WaitForCapacity(ctx, model, 1)
 		})
@@ -3283,7 +3282,7 @@ func TestRatelimit_ConcurrentWaitForCapacityAndRecordUsage_Case3277(t *testing.T
 	errs := make(chan error, 5)
 	for range 5 {
 		wg.Go(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			errs <- rl.WaitForCapacity(ctx, model, 0)
 		})
@@ -3697,13 +3696,13 @@ func TestRatelimit_RateLimiter_WaitForCapacity_Good(t *core.T) {
 	rl := publicLimiter(t)
 	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 5})
 
-	err := rl.WaitForCapacity(context.Background(), "model-a", 1)
+	err := rl.WaitForCapacity(t.Context(), "model-a", 1)
 	core.AssertNoError(t, err)
 }
 
 func TestRatelimit_RateLimiter_WaitForCapacity_Bad(t *core.T) {
 	rl := publicLimiter(t)
-	err := rl.WaitForCapacity(context.Background(), "model-a", -1)
+	err := rl.WaitForCapacity(t.Context(), "model-a", -1)
 
 	core.AssertError(t, err)
 	core.AssertContains(t, err.Error(), "negative tokens")
@@ -3713,7 +3712,7 @@ func TestRatelimit_RateLimiter_WaitForCapacity_Ugly(t *core.T) {
 	rl := publicLimiter(t)
 	rl.SetQuota("model-a", ModelQuota{MaxRPM: 1, MaxTPM: 100, MaxRPD: 5})
 	rl.RecordUsage("model-a", 1, 1)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := rl.WaitForCapacity(ctx, "model-a", 1)
@@ -4066,13 +4065,13 @@ func TestRatelimit_CountTokens_Good(t *core.T) {
 	})
 	defer func() { http.DefaultTransport = oldTransport }()
 
-	tokens, err := CountTokens(context.Background(), "key", "gemini-3-pro-preview", "hello")
+	tokens, err := CountTokens(t.Context(), "key", "gemini-3-pro-preview", "hello")
 	core.AssertNoError(t, err)
 	core.AssertEqual(t, 7, tokens)
 }
 
 func TestRatelimit_CountTokens_Bad(t *core.T) {
-	tokens, err := CountTokens(context.Background(), "key", "", "hello")
+	tokens, err := CountTokens(t.Context(), "key", "", "hello")
 
 	core.AssertError(t, err)
 	core.AssertEqual(t, 0, tokens)
@@ -4090,7 +4089,7 @@ func TestRatelimit_CountTokens_Ugly(t *core.T) {
 	})
 	defer func() { http.DefaultTransport = oldTransport }()
 
-	tokens, err := CountTokens(context.Background(), "key", "gemini-3-pro-preview", "hello")
+	tokens, err := CountTokens(t.Context(), "key", "gemini-3-pro-preview", "hello")
 	core.AssertError(t, err)
 	core.AssertEqual(t, 0, tokens)
 }

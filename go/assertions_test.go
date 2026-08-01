@@ -143,7 +143,7 @@ func testContains(container, elem any) bool {
 			return cv.MapIndex(key.Convert(cv.Type().Key())).IsValid()
 		}
 	case reflect.Slice, reflect.Array:
-		for i := 0; i < cv.Len(); i++ {
+		for i := range cv.Len() {
 			if reflect.DeepEqual(cv.Index(i).Interface(), elem) {
 				return true
 			}

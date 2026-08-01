@@ -201,7 +201,7 @@ func TestIter_IterEarlyBreak_Case(t *testing.T) {
 
 func TestIter_CountTokensFull_Case(t *testing.T) {
 	t.Run("empty model is rejected", func(t *testing.T) {
-		_, err := CountTokens(context.Background(), "key", "", "text")
+		_, err := CountTokens(t.Context(), "key", "", "text")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -214,7 +214,7 @@ func TestIter_CountTokensFull_Case(t *testing.T) {
 		}))
 		defer server.Close()
 
-		_, err := countTokensWithClient(context.Background(), server.Client(), server.URL, "key", "model", "text")
+		_, err := countTokensWithClient(t.Context(), server.Client(), server.URL, "key", "model", "text")
 		if err == nil {
 			t.Fatal(testExpectedErrorMessage())
 		}
@@ -224,7 +224,7 @@ func TestIter_CountTokensFull_Case(t *testing.T) {
 	})
 
 	t.Run("context cancelled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err := countTokensWithClient(ctx, http.DefaultClient, "https://generativelanguage.googleapis.com", "key", "model", "text")
 		if err == nil {

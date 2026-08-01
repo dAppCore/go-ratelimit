@@ -3,8 +3,6 @@
 package ratelimit
 
 import (
-	"context"
-
 	core "dappco.re/go"
 )
 
@@ -48,40 +46,40 @@ func serviceForTest(t *core.T) *Service {
 
 func TestService_Service_OnStartup_Good(t *core.T) {
 	svc := serviceForTest(t)
-	startup := svc.OnStartup(context.Background())
+	startup := svc.OnStartup(t.Context())
 	core.AssertTrue(t, startup.OK)
 }
 
 func TestService_Service_OnStartup_Bad(t *core.T) {
 	var s *Service
-	r := s.OnStartup(context.Background())
+	r := s.OnStartup(t.Context())
 	core.AssertTrue(t, r.OK)
 }
 
 func TestService_Service_OnStartup_Ugly(t *core.T) {
 	svc := serviceForTest(t)
-	svc.OnStartup(context.Background())
-	again := svc.OnStartup(context.Background())
+	svc.OnStartup(t.Context())
+	again := svc.OnStartup(t.Context())
 	core.AssertTrue(t, again.OK)
 }
 
 func TestService_Service_OnShutdown_Good(t *core.T) {
 	svc := serviceForTest(t)
-	shutdown := svc.OnShutdown(context.Background())
+	shutdown := svc.OnShutdown(t.Context())
 	core.AssertTrue(t, shutdown.OK)
 }
 
 func TestService_Service_OnShutdown_Bad(t *core.T) {
 	var s *Service
-	r := s.OnShutdown(context.Background())
+	r := s.OnShutdown(t.Context())
 	core.AssertTrue(t, r.OK)
 }
 
 func TestService_Service_OnShutdown_Ugly(t *core.T) {
 	svc := serviceForTest(t)
 	// Persist on every shutdown; both invocations should succeed.
-	svc.OnShutdown(context.Background())
-	again := svc.OnShutdown(context.Background())
+	svc.OnShutdown(t.Context())
+	again := svc.OnShutdown(t.Context())
 	core.AssertTrue(t, again.OK)
 }
 
