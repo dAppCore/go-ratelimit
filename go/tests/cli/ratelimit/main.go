@@ -8,8 +8,8 @@ package main
 import (
 	"time"
 
-	core "dappco.re/go"
-	"dappco.re/go/ratelimit"
+	core "github.com/dappcore/go"
+	"github.com/dappcore/go-ratelimit/go"
 )
 
 func main() {

@@ -3,7 +3,7 @@
 package ratelimit
 
 import (
-	core "dappco.re/go"
+	core "github.com/dappcore/go"
 	"math"
 	"reflect"
 	"time"
