@@ -5,8 +5,8 @@ package ratelimit_test
 import (
 	"context"
 
-	core "dappco.re/go"
-	"dappco.re/go/ratelimit"
+	core "github.com/dappcore/go"
+	"github.com/dappcore/go-ratelimit/go"
 )
 
 // ExampleNewService constructs the ratelimit service factory through

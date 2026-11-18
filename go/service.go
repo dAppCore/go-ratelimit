@@ -12,7 +12,7 @@ package ratelimit
 import (
 	"context"
 
-	core "dappco.re/go"
+	core "github.com/dappcore/go"
 )
 
 // Service is the registerable handle for the ratelimit package — embeds

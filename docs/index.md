@@ -107,7 +107,7 @@ The module is a single package with no sub-packages.
 
 | Dependency | Purpose | Category |
 |------------|---------|----------|
-| `dappco.re/go/core` | File I/O helpers, structured errors, JSON helpers, path/environment utilities | Direct |
+| `github.com/dappcore/go` | File I/O helpers, structured errors, JSON helpers, path/environment utilities | Direct |
 | `gopkg.in/yaml.v3` | YAML serialisation for the legacy persistence backend | Direct |
 | `modernc.org/sqlite` | Pure Go SQLite driver (no CGO required) | Direct |
 | `github.com/stretchr/testify` | Test assertions (`assert`, `require`) | Test only |

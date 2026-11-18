@@ -196,7 +196,7 @@ Direct dependencies are intentionally minimal:
 
 | Dependency | Purpose |
 |------------|---------|
-| `dappco.re/go/core` | File I/O helpers, structured errors, JSON helpers, path/environment utilities |
+| `github.com/dappcore/go` | File I/O helpers, structured errors, JSON helpers, path/environment utilities |
 | `gopkg.in/yaml.v3` | YAML serialisation for legacy backend |
 | `modernc.org/sqlite` | Pure Go SQLite for persistent backend |
 | `github.com/stretchr/testify` | Test assertions (test-only) |

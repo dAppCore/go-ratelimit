@@ -10,15 +10,15 @@ Date: 2026-03-23
 ## stdlib -> core.*
 
 - `CLAUDE.md:65` still documents `forge.lthn.ai/core/go-io`, while the direct
-  dependency in `go.mod:6` is `dappco.re/go/core/io`.
+  dependency in `go.mod:6` is `github.com/dappcore/go-io/go`.
 - `CLAUDE.md:66` still documents `forge.lthn.ai/core/go-log`, while the direct
-  dependency in `go.mod:7` is `dappco.re/go/core/log`.
+  dependency in `go.mod:7` is `github.com/dappcore/go-log/go`.
 - `docs/development.md:175` still mandates `fmt.Errorf("ratelimit.Function: what: %w", err)`,
   but the implementation and repo guidance use `coreerr.E(...)`
   (`ratelimit.go:19`, `sqlite.go:8`, `CLAUDE.md:31`).
 - `docs/development.md:195` omits the `core.*` direct dependencies entirely;
-  `go.mod:6-7` now declares both `dappco.re/go/core/io` and
-  `dappco.re/go/core/log`.
+  `go.mod:6-7` now declares both `github.com/dappcore/go-io/go` and
+  `github.com/dappcore/go-log/go`.
 - `docs/index.md:102` likewise omits the `core.*` direct dependencies that are
   present in `go.mod:6-7`.
 
